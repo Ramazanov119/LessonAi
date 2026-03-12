@@ -6,7 +6,7 @@ import re
 
 client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-st.title("AI Генератор учебных материалов")
+st.title("AI ETEC")
 
 teacher = st.text_input("ФИО преподавателя")
 subject = st.text_input("Название предмета")
