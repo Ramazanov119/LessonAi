@@ -1,333 +1,549 @@
-import streamlit as st
-from docx import Document
-from openai import OpenAI
+import html
 import json
-import re
 
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+import streamlit as st
+from datetime import date
 
-st.title("AI ETEC")
+from models import AIConfig, LessonMetadata, TeacherProfile
+from services.ai import (
+    AIServiceError,
+    create_control,
+    create_lesson,
+    create_lecture,
+    create_schema,
+    create_visual,
+    rework_lecture,
+)
+from services.docx_generator import build_doc, build_lecture_docx
+from services.preview_renderer import generation_status, render_document_preview
+from services.supabase_service import (
+    ALLOWED_COLLEGES,
+    DAILY_LESSON_LIMIT,
+    AuthenticationError,
+    DailyLimitExceeded,
+    FIXED_LESSON_DURATION,
+    SupabaseService,
+    SupabaseServiceError,
+    create_supabase_client,
+)
+from ui.theme import apply_theme
 
-teacher = st.text_input("ФИО преподавателя")
-subject = st.text_input("Название предмета")
-topic = st.text_input("Тема урока")
+st.set_page_config(page_title="AI College Constructor", layout="wide")
+apply_theme()
 
-group = st.text_input("Группа")
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+OPENROUTER_API_KEY = st.secrets["OPENROUTER_API_KEY"]
+SUPABASE_URL = st.secrets.get("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY", "")
 
-course = st.selectbox("Курс",["1","2","3","4"])
-
-lesson_duration = st.selectbox(
-    "Длительность урока",
-    ["60 минут","80 минут"]
+AI_CONFIG = AIConfig(
+    openai_api_key=OPENAI_API_KEY,
+    openrouter_api_key=OPENROUTER_API_KEY,
 )
 
-date = st.date_input("Дата урока")
+SPECIALTIES = [
+    "04130100-Менеджмент (қолдану салалары бойынша)/(по отраслям и по областям)",
+    "04110100-Есеп және аудит/Учет и аудит",
+    "04210100-Құқықтану/Правоведение",
+    "06120100-Есептеу техникасы және ақпараттық желілер/Вычислительная техника и информационные сети",
+    "10410300-Автомобиль көлігінде тасымалдауды ұйымдастыру және қозғалысты басқару/Организация перевозок и управление движением на автомобильном транспорте",
+    "06130100-Бағдарламалық қызмет ету (түрлері бойынша)/Программное обеспечение (по видам)",
+    "07130700-Электромеханикалық жабдықтарға техникалық қызмет көрсету, жөндеу және пайдалану",
+    "07161300-Автомобиль көлігіне техникалық қызмет көрсету және пайдалану",
+]
 
-language = st.radio(
-    "Выберите язык",
-    ["Русский","Қазақша"]
-)
+PCK_HEADS = ["Мавияева М.Д.", "Утегенова А.А.", "Серік А.М."]
 
-lesson_type_choice = st.selectbox(
-    "Тип урока",
-    [
-        "Усвоения новых знаний / Жаңа білім беру сабағы",
-        "Закрепления знаний / Бекіту сабақ",
-        "Повторение / Қайталау сабақ",
-        "Обобщение / Жалпылау сабақ",
-        "Итоговый урок / Қорытындылау сабақ",
-        "Комбинированный / Аралас сабақ"
-    ]
-)
-
-# время урока
-
-if lesson_duration == "60 минут":
-    time1="5 мин"
-    time2="15 мин"
-    time3="10 мин"
-    time4="15 мин"
-    time5="5 мин"
-    time6="5 мин"
-    time7="5 мин"
-else:
-    time1="5 мин"
-    time2="20 мин"
-    time3="15 мин"
-    time4="20 мин"
-    time5="10 мин"
-    time6="5 мин"
-    time7="5 мин"
+LESSON_TYPES = [
+    "Жаңа сабақ",
+    "Аралас сабақ",
+    "Практикалық сабақ",
+    "Зертханалық сабақ",
+    "Қайталау сабағы",
+    "Бекіту сабағы",
+]
 
 
-# язык
-
-if language == "Русский":
-
-    lang_instruction="Напиши текст на русском языке."
-
-    org_steps="""1. Приветствие обучающихся
-2. Проверка присутствующих
-3. Ознакомление с темой и целью занятия"""
-
-    lesson_type=lesson_type_choice.split("/")[0].strip()
-
-    presentation_resource="Презентация к уроку"
-    presentation_demo="Демонстрация на презентации."
-    peer_assessment="Взаимооценивание студентов."
-    assessment_sheet="Лист оценивания."
-
-else:
-
-    lang_instruction="Жауаптың барлығын қазақ тілінде жаз."
-
-    org_steps="""1. Оқушыларды қарсы алу
-2. Қатысушыларды тексеру
-3. Сабақтың тақырыбы мен мақсатымен танысу"""
-
-    lesson_type=lesson_type_choice.split("/")[1].strip()
-
-    presentation_resource="Сабаққа презентация"
-    presentation_demo="Презентация демонстрациясы."
-    peer_assessment="Студенттерді өзара бағалау."
-    assessment_sheet="Бағалау парағы"
+def _store_session(session):
+    st.session_state["auth_session"] = {
+        "access_token": session.access_token,
+        "refresh_token": session.refresh_token,
+    }
 
 
-# безопасная замена текста
+def _render_auth_screen(service):
+    _render_brand_header()
+    login_tab, registration_tab = st.tabs(["Войти", "Зарегистрироваться"])
 
-def replace_text(doc, replacements):
-
-    for p in doc.paragraphs:
-        for key,val in replacements.items():
-            if key in p.text:
-                p.text = p.text.replace(key, str(val))
-
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    for key,val in replacements.items():
-                        if key in p.text:
-                            p.text = p.text.replace(key, str(val))
-
-
-# ==========================
-# ПЛАН УРОКА
-# ==========================
-
-if st.button("📄 Сгенерировать план урока"):
-
-    with st.spinner("ИИ генерирует план урока..."):
-
-        prompt=f"""
-Создай подробный план учебного занятия для колледжа.
-
-Предмет: {subject}
-Тема: {topic}
-
-Продолжительность: {lesson_duration}
-
-Используй таксономию Блума.
-
-Этапы урока:
-1 Организационный этап
-2 Формирование новых знаний
-3 Формирование навыков
-4 Анализ
-5 Подведение итогов
-6 Рефлексия
-7 Домашнее задание
-
-Язык: {language}
-
-Ответ верни в JSON:
-
-{{
-"goal":"",
-"tasks":"",
-"results":"",
-"resources":"",
-"theory":"",
-"practice":"",
-"practice_result":"",
-"reflection":"",
-"homework":""
-}}
-"""
-
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[{"role":"user","content":prompt}]
+    with login_tab:
+        login_email = st.text_input("Email", key="login_email")
+        login_password = st.text_input(
+            "Пароль", type="password", key="login_password"
         )
+        if st.button("Войти", key="login_button", type="primary"):
+            try:
+                _store_session(service.sign_in(login_email, login_password))
+                st.rerun()
+            except AuthenticationError as error:
+                st.error(str(error))
 
-        text=response.choices[0].message.content
+    with registration_tab:
+        registration_email = st.text_input("Email", key="registration_email")
+        registration_password = st.text_input(
+            "Пароль", type="password", key="registration_password"
+        )
+        registration_name = st.text_input("ФИО преподавателя")
+        registration_college = st.radio(
+            "Колледж",
+            ALLOWED_COLLEGES,
+            horizontal=True,
+            key="registration_college",
+        )
+        college_logo_left, college_logo_right = st.columns(2)
+        college_logo_left.image("assets/logos/etec.png", width=120)
+        college_logo_right.image("assets/logos/meta.png", width=120)
+        if st.button("Зарегистрироваться", key="registration_button", type="primary"):
+            if not registration_name.strip():
+                st.error("Укажите ФИО преподавателя.")
+            else:
+                try:
+                    _, session = service.sign_up(
+                        registration_email,
+                        registration_password,
+                        TeacherProfile(
+                            registration_name.strip(), registration_college
+                        ),
+                    )
+                    if session is None:
+                        st.success("Регистрация завершена. Подтвердите email и войдите.")
+                    else:
+                        _store_session(session)
+                        st.rerun()
+                except (AuthenticationError, SupabaseServiceError) as error:
+                    st.error(str(error))
 
-        try:
 
-            json_text=re.search(r'\{.*\}',text,re.DOTALL).group()
-            data=json.loads(json_text)
+def _preview_metadata(teacher_profile, subject, topic, lesson_date):
+    return {
+        "college": teacher_profile.college,
+        "teacher": teacher_profile.full_name,
+        "subject": subject.strip(),
+        "topic": topic.strip(),
+        "date": lesson_date.strftime("%d.%m.%Y"),
+    }
 
-        except:
-            st.error("Ошибка генерации JSON")
-            st.stop()
 
-        doc=Document("template.docx")
+def _show_generation_error():
+    st.error("Не удалось создать материал. Попробуйте ещё раз.")
 
-        replacements={
+def _render_brand_header(*, daily_count=None):
+    quota_class = ""
+    if daily_count == DAILY_LESSON_LIMIT:
+        quota_class = "danger"
+    elif daily_count is not None and daily_count >= 6:
+        quota_class = "warning"
+    quota = ""
+    if daily_count is not None:
+        quota = (
+            f"<span class='ai-edu-quota {quota_class}'>Сегодня "
+            f"<strong>{daily_count}/{DAILY_LESSON_LIMIT}</strong></span>"
+        )
+    st.markdown(
+        f"<div class='ai-edu-brand'><div class='ai-edu-wordmark'>"
+        f"<span>AI</span> EDU</div>{quota}</div>"
+        "<div class='ai-edu-brand-line'></div>",
+        unsafe_allow_html=True,
+    )
 
-        "{teacher}":teacher,
-        "{subject}":subject,
-        "{topic}":topic,
-        "{group}":group,
-        "{course}":course,
-        "{date}":date.strftime("%d.%m.%Y"),
 
-        "{lesson_type}":lesson_type,
+MATERIAL_LABELS = {
+    "lesson_plan": ("📋", "Поурочный план"),
+    "lecture": ("📚", "Лекция"),
+    "practice": ("🛠", "Практическое занятие"),
+    "presentation": ("🎨", "Презентация"),
+}
 
-        "{time1}":time1,
-        "{time2}":time2,
-        "{time3}":time3,
-        "{time4}":time4,
-        "{time5}":time5,
-        "{time6}":time6,
-        "{time7}":time7,
 
-        "{goal}":data.get("goal",""),
-        "{tasks}":data.get("tasks",""),
-        "{results}":data.get("results",""),
-        "{resources}":data.get("resources",""),
+def _render_lesson_card(lesson, materials):
+    material_types = {item["material_type"] for item in materials}
+    completed = len(material_types.intersection(MATERIAL_LABELS))
+    title = html.escape(str(lesson.get("topic", "Без темы")))
+    subject = html.escape(str(lesson.get("subject", "")))
+    metadata = " · ".join(
+        html.escape(str(lesson.get(key, "")))
+        for key in ("group_name", "lesson_date", "duration")
+    )
+    st.markdown(
+        f"<div class='ai-edu-lesson-card'><h3>{title}</h3>"
+        f"<p class='ai-edu-card-subtitle'>{subject}</p>"
+        f"<p class='ai-edu-card-meta'>{metadata}</p>"
+        f"<p class='ai-edu-card-kit'>Комплект: <strong>{completed}/4</strong></p></div>",
+        unsafe_allow_html=True,
+    )
+    for material_type, (_, label) in MATERIAL_LABELS.items():
+        marker = "✓" if material_type in material_types else "○"
+        st.caption(f"{marker} {label}")
+    return st.button(
+        "Открыть занятие",
+        key=f"open_lesson_{lesson['id']}",
+        type="secondary",
+    )
 
-        "{org_steps}":org_steps,
 
-        "{theory}":data.get("theory",""),
-        "{practice}":data.get("practice",""),
-        "{practice_result}":data.get("practice_result",""),
+def _render_lesson_workspace(service, lessons):
+    st.subheader("Мои занятия")
+    search = st.text_input("Поиск по теме, предмету или группе", placeholder="Например: сети")
+    period = st.radio("Период", ["Все", "Сегодня", "Эта неделя"], horizontal=True)
+    today = date.today()
+    filtered = []
+    for lesson in lessons:
+        haystack = " ".join(
+            str(lesson.get(key, "")).lower()
+            for key in ("topic", "subject", "group_name")
+        )
+        if search.strip().lower() not in haystack:
+            continue
+        lesson_date = str(lesson.get("lesson_date", ""))
+        if period == "Сегодня" and lesson_date != today.isoformat():
+            continue
+        if period == "Эта неделя":
+            try:
+                if date.fromisoformat(lesson_date).isocalendar()[:2] != today.isocalendar()[:2]:
+                    continue
+            except ValueError:
+                continue
+        filtered.append(lesson)
 
-        "{reflection}":data.get("reflection",""),
-        "{homework}":data.get("homework",""),
+    if not filtered:
+        st.info("Занятий пока нет. Создайте первое занятие, чтобы собрать материалы в одном месте.")
+        return
 
-        "{presentation_resource}":presentation_resource,
-        "{presentation_demo}":presentation_demo,
-        "{peer_assessment}":peer_assessment,
-        "{assessment_sheet}":assessment_sheet
+    cards = st.columns(2, gap="large")
+    for index, lesson in enumerate(filtered):
+        with cards[index % 2]:
+            try:
+                materials = service.list_materials(lesson["id"])
+            except SupabaseServiceError:
+                materials = []
+            if _render_lesson_card(lesson, materials):
+                st.session_state["selected_lesson_id"] = lesson["id"]
+                st.rerun()
+
+    selected_id = st.session_state.get("selected_lesson_id")
+    selected = next((lesson for lesson in lessons if lesson.get("id") == selected_id), None)
+    if selected:
+        st.divider()
+        st.subheader(html.escape(str(selected.get("topic", "Занятие"))))
+        st.caption(
+            f"{selected.get('subject', '')} · {selected.get('group_name', '')} · "
+            f"{selected.get('lesson_date', '')} · {selected.get('duration', FIXED_LESSON_DURATION)}"
+        )
+        materials = service.list_materials(selected["id"])
+        material_map = {item["material_type"]: item for item in materials}
+        detail_columns = st.columns(2, gap="medium")
+        for index, (material_type, (_, label)) in enumerate(MATERIAL_LABELS.items()):
+            with detail_columns[index % 2]:
+                state = "Создан" if material_type in material_map else "Не создан"
+                st.markdown(f"**{label}**  \n{state}")
+
+
+def _material_content(content):
+    if isinstance(content, str):
+        return content
+    return json.dumps(content, ensure_ascii=False)
+
+
+SUPABASE_SERVICE = None
+if SUPABASE_URL and SUPABASE_ANON_KEY:
+    try:
+        SUPABASE_SERVICE = SupabaseService(
+            create_supabase_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        )
+    except SupabaseServiceError as error:
+        st.error(str(error))
+        st.stop()
+
+if SUPABASE_SERVICE is None:
+    st.error(
+        "Supabase не настроен. Добавьте SUPABASE_URL и SUPABASE_ANON_KEY "
+        "в Streamlit secrets."
+    )
+    st.stop()
+
+auth_session = st.session_state.get("auth_session")
+if auth_session:
+    try:
+        SUPABASE_SERVICE.restore_session(
+            auth_session["access_token"], auth_session["refresh_token"]
+        )
+    except AuthenticationError:
+        st.session_state.pop("auth_session", None)
+        auth_session = None
+
+if not auth_session:
+    _render_auth_screen(SUPABASE_SERVICE)
+    st.stop()
+
+try:
+    teacher_profile = SUPABASE_SERVICE.get_profile()
+    daily_count = SUPABASE_SERVICE.get_daily_count()
+except SupabaseServiceError as error:
+    st.error(str(error))
+    st.stop()
+
+_render_brand_header(daily_count=daily_count)
+header_name, header_college, header_logout = st.columns([2, 2, 1])
+header_name.caption(f"Преподаватель · {teacher_profile.full_name}")
+header_college.caption(f"Колледж · {teacher_profile.college}")
+if header_logout.button("Выйти", type="tertiary"):
+    try:
+        SUPABASE_SERVICE.sign_out()
+    finally:
+        st.session_state.pop("auth_session", None)
+        st.rerun()
+
+try:
+    lessons = SUPABASE_SERVICE.list_lessons()
+except SupabaseServiceError as error:
+    lessons = []
+    st.error(str(error))
+
+workspace_view = st.radio(
+    "Раздел",
+    ["Главная", "Мои занятия", "Создать занятие"],
+    horizontal=True,
+    key="workspace_view",
+)
+if workspace_view in ("Главная", "Мои занятия"):
+    st.markdown(
+        f"<div class='ai-edu-panel'><h2>Добро пожаловать, "
+        f"{html.escape(teacher_profile.full_name)}</h2>"
+        f"<p>Рабочее пространство преподавателя · {html.escape(teacher_profile.college)}</p></div>",
+        unsafe_allow_html=True,
+    )
+    _render_lesson_workspace(SUPABASE_SERVICE, lessons)
+    if workspace_view == "Главная" and st.button("+ Создать занятие", type="primary"):
+        st.session_state["workspace_view"] = "Создать занятие"
+        st.rerun()
+    st.stop()
+
+mode = st.radio(
+    "Материал",
+    ["Поурочный план", "Лекция", "Практическое занятие", "Презентация"],
+    horizontal=True,
+)
+form_left, form_right = st.columns(2, gap="large")
+with form_left:
+    teacher_name = st.text_input(
+        "ФИО преподавателя", value=teacher_profile.full_name, disabled=True
+    )
+    topic = st.text_input("Тема")
+    course = st.selectbox("Курс", [1, 2, 3, 4])
+    language = st.selectbox("Язык", ["Русский", "Қазақша"])
+with form_right:
+    subject = st.text_input("Предмет")
+    group_name = st.text_input("Группа")
+    lesson_date = st.date_input("Дата урока", value=date.today())
+    specialty = st.selectbox("Специальность", SPECIALTIES)
+pck = st.selectbox("Председатель ПЦК", PCK_HEADS)
+
+if mode == "Поурочный план":
+    lesson_type = st.selectbox("Тип урока", LESSON_TYPES)
+    if st.button("Создать план урока", type="primary", icon="✨"):
+        required_fields = {
+            "ФИО преподавателя": teacher_name,
+            "Предмет": subject,
+            "Тема": topic,
+            "Группа": group_name,
         }
+        missing_fields = [
+            name for name, value in required_fields.items() if not value.strip()
+        ]
+        if missing_fields:
+            st.error("Заполните поля: " + ", ".join(missing_fields) + ".")
+        elif daily_count >= DAILY_LESSON_LIMIT:
+            st.error(f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий.")
+        else:
+            try:
+                with generation_status(
+                    "Создаём поурочный план",
+                    ["✓ Поурочный план готов"],
+                ) as progress:
+                    progress.write("🧠 Анализируем тему урока...")
+                    lesson = create_lesson(
+                        subject, topic, language, specialty, pck, lesson_type, AI_CONFIG
+                    )
+                    progress.write("🎯 Формируем цели обучения...")
+                    progress.write("⏱️ Распределяем этапы занятия...")
+                    saved_lesson = SUPABASE_SERVICE.create_lesson(
+                        LessonMetadata(
+                            full_name=teacher_profile.full_name,
+                            college=teacher_profile.college,
+                            subject=subject.strip(),
+                            topic=topic.strip(),
+                            group_name=group_name.strip(),
+                            course=course,
+                            duration=FIXED_LESSON_DURATION,
+                            lesson_date=lesson_date,
+                            language=language,
+                            lesson_type=lesson_type,
+                            speciality=specialty,
+                            chair=pck,
+                        )
+                    )
+                    SUPABASE_SERVICE.upsert_material(
+                        saved_lesson["lesson_id"], "lesson_plan", _material_content(lesson)
+                    )
+                    daily_count = saved_lesson.get("daily_count", daily_count + 1)
+                    progress.write("📝 Формируем поурочный план...")
+                    lesson_fields = {
+                        "topic": topic.strip(),
+                        "subject": subject.strip(),
+                        "teacher": teacher_profile.full_name,
+                        "date": lesson_date.strftime("%d.%m.%Y"),
+                        "course": course,
+                        "group": group_name.strip(),
+                        "lesson_type": lesson_type,
+                    }
+                    progress.write("📄 Подготавливаем документ...")
+                    doc = build_doc("План урока", lesson, fields=lesson_fields)
+                render_document_preview(
+                    lesson,
+                    "План урока",
+                    _preview_metadata(teacher_profile, subject, topic, lesson_date),
+                )
+                st.download_button("Скачать DOCX", doc, "lesson.docx", type="secondary")
+            except DailyLimitExceeded as error:
+                st.error(str(error))
+            except (AIServiceError, SupabaseServiceError) as error:
+                _show_generation_error()
+elif mode == "Лекция":
+    lecture_type = st.selectbox("Тип лекции", ["Лекция", "Обзорная лекция", "Профессиональная лекция"])
+    if st.button("Создать лекцию", type="primary", icon="✨"):
+        required_fields = {
+            "ФИО преподавателя": teacher_name,
+            "Предмет": subject,
+            "Тема": topic,
+            "Группа": group_name,
+        }
+        missing_fields = [
+            name for name, value in required_fields.items() if not value.strip()
+        ]
+        if missing_fields:
+            st.error("Заполните поля: " + ", ".join(missing_fields) + ".")
+        else:
+            try:
+                with generation_status(
+                    "Создаём лекцию",
+                    ["✓ Материал готов"],
+                ) as progress:
+                    progress.write("🧠 Анализируем тему занятия...")
+                    lecture = create_lecture(
+                        subject, topic, language, specialty, pck, lecture_type, AI_CONFIG
+                    )
+                    saved_lesson = SUPABASE_SERVICE.create_lesson(
+                        LessonMetadata(
+                            full_name=teacher_profile.full_name,
+                            college=teacher_profile.college,
+                            subject=subject.strip(),
+                            topic=topic.strip(),
+                            group_name=group_name.strip(),
+                            course=course,
+                            duration=FIXED_LESSON_DURATION,
+                            lesson_date=lesson_date,
+                            language=language,
+                            lesson_type=lecture_type,
+                            speciality=specialty,
+                            chair=pck,
+                        )
+                    )
+                    st.session_state["selected_lesson_id"] = saved_lesson["lesson_id"]
+                    SUPABASE_SERVICE.upsert_material(
+                        saved_lesson["lesson_id"], "lecture", _material_content(lecture)
+                    )
+                    progress.write("📚 Формируем структуру лекции...")
+                    progress.write("✍️ Подготавливаем теоретический материал...")
+                    progress.write("💡 Добавляем профессиональные примеры...")
+                    st.session_state["lecture_text"] = lecture
+                    progress.write("📄 Формируем учебный документ...")
+                    st.session_state["lecture_doc"] = build_lecture_docx(
+                        lecture,
+                        title=f"Лекция: {topic.strip()}",
+                        college=teacher_profile.college,
+                        subject=subject.strip(),
+                        teacher=teacher_profile.full_name,
+                        group=group_name.strip(),
+                        course=course,
+                        lesson_date=lesson_date,
+                    )
+                    progress.write("✨ Завершаем оформление...")
+            except AIServiceError as error:
+                _show_generation_error()
 
-        replace_text(doc,replacements)
-
-        file="lesson_plan.docx"
-        doc.save(file)
-
-        with open(file,"rb") as f:
-            st.download_button(
-                "Скачать план урока",
-                f,
-                file_name=file
-            )
-
-
-# ==========================
-# ЛЕКЦИЯ
-# ==========================
-
-if st.button("📘 Сгенерировать лекцию"):
-
-    prompt=f"""
-Напиши лекцию для колледжа.
-
-Тема: {topic}
-
-Размер: примерно 2 страницы A4.
-
-Язык: {language}
-"""
-
-    response=client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role":"user","content":prompt}]
-    )
-
-    lecture=response.choices[0].message.content
-
-    doc=Document()
-    doc.add_heading(topic,0)
-
-    for p in lecture.split("\n"):
-        doc.add_paragraph(p)
-
-    file="lecture.docx"
-    doc.save(file)
-
-    with open(file,"rb") as f:
-        st.download_button("Скачать лекцию",f,file_name=file)
-
-
-# ==========================
-# ПРАКТИКА
-# ==========================
-
-if st.button("🧪 Сгенерировать практическую работу"):
-
-    prompt=f"""
-Создай практическую работу.
-
-Тема: {topic}
-
-3 задания.
-
-Язык: {language}
-"""
-
-    response=client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role":"user","content":prompt}]
-    )
-
-    text=response.choices[0].message.content
-
-    doc=Document()
-    doc.add_heading("Практическая работа",0)
-
-    for p in text.split("\n"):
-        doc.add_paragraph(p)
-
-    file="practice.docx"
-    doc.save(file)
-
-    with open(file,"rb") as f:
-        st.download_button("Скачать практическую работу",f,file_name=file)
-
-
-# ==========================
-# ТЕСТ
-# ==========================
-
-if st.button("📝 Сгенерировать тест"):
-
-    prompt=f"""
-Создай тест из 10 вопросов.
-
-Тема: {topic}
-
-4 варианта ответа.
-
-Язык: {language}
-"""
-
-    response=client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=[{"role":"user","content":prompt}]
-    )
-
-    text=response.choices[0].message.content
-
-    doc=Document()
-    doc.add_heading("Тест",0)
-
-    for p in text.split("\n"):
-        doc.add_paragraph(p)
-
-    file="test.docx"
-    doc.save(file)
-
-    with open(file,"rb") as f:
-        st.download_button("Скачать тест",f,file_name=file)
+    if "lecture_text" in st.session_state and "lecture_doc" in st.session_state:
+        render_document_preview(
+            st.session_state["lecture_text"],
+            "Лекция",
+            _preview_metadata(teacher_profile, subject, topic, lesson_date),
+        )
+        st.download_button(
+            "Скачать DOCX",
+            st.session_state["lecture_doc"],
+            "lecture.docx",
+            type="secondary",
+        )
+        rework_mode = st.selectbox(
+            "🔄 Переработать лекцию",
+            [
+                "Сделать содержательнее",
+                "Добавить профессиональные примеры",
+                "Добавить реальные кейсы",
+                "Упростить язык",
+                "Сделать научнее",
+                "Добавить таблицы",
+                "Добавить практические примеры",
+                "Переработать полностью",
+            ],
+            key="lecture_rework_mode",
+        )
+        if st.button(
+            "Применить переработку",
+            key="lecture_rework_button",
+            type="secondary",
+            icon="🔄",
+        ):
+            try:
+                with generation_status(
+                    "Перерабатываем лекцию",
+                    ["✓ Материал готов"],
+                ) as progress:
+                    progress.write("🧠 Анализируем текущий материал...")
+                    updated_lecture = rework_lecture(
+                        st.session_state["lecture_text"],
+                        rework_mode,
+                        AI_CONFIG,
+                    )
+                    progress.write("✍️ Улучшаем содержание и примеры...")
+                    st.session_state["lecture_text"] = updated_lecture
+                    if st.session_state.get("selected_lesson_id"):
+                        SUPABASE_SERVICE.upsert_material(
+                            st.session_state["selected_lesson_id"],
+                            "lecture",
+                            _material_content(updated_lecture),
+                        )
+                    progress.write("📄 Обновляем учебный документ...")
+                    st.session_state["lecture_doc"] = build_lecture_docx(
+                        updated_lecture,
+                        title=f"Лекция: {topic.strip()}",
+                        college=teacher_profile.college,
+                        subject=subject.strip(),
+                        teacher=teacher_profile.full_name,
+                        group=group_name.strip(),
+                        course=course,
+                        lesson_date=lesson_date,
+                    )
+                st.rerun()
+            except (AIServiceError, SupabaseServiceError) as error:
+                _show_generation_error()
+else:
+    st.info("Генератор практического занятия и презентации будет подключён к этому занятию без создания новой темы.")
