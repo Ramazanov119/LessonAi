@@ -1,5 +1,6 @@
 import html
 import json
+import logging
 
 import streamlit as st
 from datetime import date
@@ -27,6 +28,9 @@ from services.supabase_service import (
     create_supabase_client,
 )
 from ui.theme import apply_theme
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 st.set_page_config(page_title="AI College Constructor", layout="wide")
 apply_theme()
@@ -135,6 +139,28 @@ def _preview_metadata(teacher_profile, subject, topic, lesson_date):
 
 def _show_generation_error():
     st.error("Не удалось создать материал. Попробуйте ещё раз.")
+
+
+def _log_create_event(material_type, event, subject, topic):
+    logger.info(
+        "[CREATE] %s material_type=%s subject=%r topic=%r",
+        event,
+        material_type,
+        subject.strip(),
+        topic.strip(),
+    )
+
+
+def _log_create_failure(material_type, stage, subject, topic, error):
+    logger.exception(
+        "[CREATE] failed material_type=%s subject=%r topic=%r stage=%s "
+        "exception_type=%s",
+        material_type,
+        subject.strip(),
+        topic.strip(),
+        stage,
+        type(error).__name__,
+    )
 
 def _render_brand_header(*, daily_count=None):
     quota_class = ""
@@ -387,17 +413,25 @@ if mode == "Поурочный план":
         elif daily_count >= DAILY_LESSON_LIMIT:
             st.error(f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий.")
         else:
+            material_type = "lesson_plan"
+            stage = "start"
+            _log_create_event(material_type, "start", subject, topic)
             try:
                 with generation_status(
                     "Создаём поурочный план",
                     ["✓ Поурочный план готов"],
                 ) as progress:
+                    stage = "AI generation"
+                    _log_create_event(material_type, "AI generation started", subject, topic)
                     progress.write("🧠 Анализируем тему урока...")
                     lesson = create_lesson(
                         subject, topic, language, specialty, pck, lesson_type, AI_CONFIG
                     )
+                    _log_create_event(material_type, "AI generation completed", subject, topic)
                     progress.write("🎯 Формируем цели обучения...")
                     progress.write("⏱️ Распределяем этапы занятия...")
+                    stage = "lesson creation"
+                    _log_create_event(material_type, "lesson creation started", subject, topic)
                     saved_lesson = SUPABASE_SERVICE.create_lesson(
                         LessonMetadata(
                             full_name=teacher_profile.full_name,
@@ -414,9 +448,13 @@ if mode == "Поурочный план":
                             chair=pck,
                         )
                     )
+                    _log_create_event(material_type, "lesson created", subject, topic)
+                    stage = "material save"
+                    _log_create_event(material_type, "material save started", subject, topic)
                     SUPABASE_SERVICE.upsert_material(
                         saved_lesson["lesson_id"], "lesson_plan", _material_content(lesson)
                     )
+                    _log_create_event(material_type, "material saved", subject, topic)
                     daily_count = saved_lesson.get("daily_count", daily_count + 1)
                     progress.write("📝 Формируем поурочный план...")
                     lesson_fields = {
@@ -428,17 +466,25 @@ if mode == "Поурочный план":
                         "group": group_name.strip(),
                         "lesson_type": lesson_type,
                     }
+                    stage = "document generation"
+                    _log_create_event(material_type, "document generation started", subject, topic)
                     progress.write("📄 Подготавливаем документ...")
                     doc = build_doc("План урока", lesson, fields=lesson_fields)
+                    _log_create_event(material_type, "document generation completed", subject, topic)
+                stage = "preview"
+                _log_create_event(material_type, "preview started", subject, topic)
                 render_document_preview(
                     lesson,
                     "План урока",
                     _preview_metadata(teacher_profile, subject, topic, lesson_date),
                 )
                 st.download_button("Скачать DOCX", doc, "lesson.docx", type="secondary")
+                _log_create_event(material_type, "completed", subject, topic)
             except DailyLimitExceeded as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
                 st.error(str(error))
-            except (AIServiceError, SupabaseServiceError) as error:
+            except Exception as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()
 elif mode == "Лекция":
     lecture_type = st.selectbox("Тип лекции", ["Лекция", "Обзорная лекция", "Профессиональная лекция"])
@@ -455,15 +501,23 @@ elif mode == "Лекция":
         if missing_fields:
             st.error("Заполните поля: " + ", ".join(missing_fields) + ".")
         else:
+            material_type = "lecture"
+            stage = "start"
+            _log_create_event(material_type, "start", subject, topic)
             try:
                 with generation_status(
                     "Создаём лекцию",
                     ["✓ Материал готов"],
                 ) as progress:
+                    stage = "AI generation"
+                    _log_create_event(material_type, "AI generation started", subject, topic)
                     progress.write("🧠 Анализируем тему занятия...")
                     lecture = create_lecture(
                         subject, topic, language, specialty, pck, lecture_type, AI_CONFIG
                     )
+                    _log_create_event(material_type, "AI generation completed", subject, topic)
+                    stage = "lesson creation"
+                    _log_create_event(material_type, "lesson creation started", subject, topic)
                     saved_lesson = SUPABASE_SERVICE.create_lesson(
                         LessonMetadata(
                             full_name=teacher_profile.full_name,
@@ -480,14 +534,20 @@ elif mode == "Лекция":
                             chair=pck,
                         )
                     )
+                    _log_create_event(material_type, "lesson created", subject, topic)
                     st.session_state["selected_lesson_id"] = saved_lesson["lesson_id"]
+                    stage = "material save"
+                    _log_create_event(material_type, "material save started", subject, topic)
                     SUPABASE_SERVICE.upsert_material(
                         saved_lesson["lesson_id"], "lecture", _material_content(lecture)
                     )
+                    _log_create_event(material_type, "material saved", subject, topic)
                     progress.write("📚 Формируем структуру лекции...")
                     progress.write("✍️ Подготавливаем теоретический материал...")
                     progress.write("💡 Добавляем профессиональные примеры...")
                     st.session_state["lecture_text"] = lecture
+                    stage = "document generation"
+                    _log_create_event(material_type, "document generation started", subject, topic)
                     progress.write("📄 Формируем учебный документ...")
                     st.session_state["lecture_doc"] = build_lecture_docx(
                         lecture,
@@ -499,22 +559,32 @@ elif mode == "Лекция":
                         course=course,
                         lesson_date=lesson_date,
                     )
+                    _log_create_event(material_type, "document generation completed", subject, topic)
                     progress.write("✨ Завершаем оформление...")
-            except AIServiceError as error:
+            except Exception as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()
 
     if "lecture_text" in st.session_state and "lecture_doc" in st.session_state:
-        render_document_preview(
-            st.session_state["lecture_text"],
-            "Лекция",
-            _preview_metadata(teacher_profile, subject, topic, lesson_date),
-        )
-        st.download_button(
-            "Скачать DOCX",
-            st.session_state["lecture_doc"],
-            "lecture.docx",
-            type="secondary",
-        )
+        material_type = "lecture"
+        stage = "preview"
+        try:
+            _log_create_event(material_type, "preview started", subject, topic)
+            render_document_preview(
+                st.session_state["lecture_text"],
+                "Лекция",
+                _preview_metadata(teacher_profile, subject, topic, lesson_date),
+            )
+            st.download_button(
+                "Скачать DOCX",
+                st.session_state["lecture_doc"],
+                "lecture.docx",
+                type="secondary",
+            )
+            _log_create_event(material_type, "completed", subject, topic)
+        except Exception as error:
+            _log_create_failure(material_type, stage, subject, topic, error)
+            _show_generation_error()
         rework_mode = st.selectbox(
             "🔄 Переработать лекцию",
             [
@@ -535,25 +605,36 @@ elif mode == "Лекция":
             type="secondary",
             icon="🔄",
         ):
+            material_type = "lecture"
+            stage = "start"
+            _log_create_event(material_type, "start", subject, topic)
             try:
                 with generation_status(
                     "Перерабатываем лекцию",
                     ["✓ Материал готов"],
                 ) as progress:
+                    stage = "AI generation"
+                    _log_create_event(material_type, "AI generation started", subject, topic)
                     progress.write("🧠 Анализируем текущий материал...")
                     updated_lecture = rework_lecture(
                         st.session_state["lecture_text"],
                         rework_mode,
                         AI_CONFIG,
                     )
+                    _log_create_event(material_type, "AI generation completed", subject, topic)
                     progress.write("✍️ Улучшаем содержание и примеры...")
                     st.session_state["lecture_text"] = updated_lecture
                     if st.session_state.get("selected_lesson_id"):
+                        stage = "material save"
+                        _log_create_event(material_type, "material save started", subject, topic)
                         SUPABASE_SERVICE.upsert_material(
                             st.session_state["selected_lesson_id"],
                             "lecture",
                             _material_content(updated_lecture),
                         )
+                        _log_create_event(material_type, "material saved", subject, topic)
+                    stage = "document generation"
+                    _log_create_event(material_type, "document generation started", subject, topic)
                     progress.write("📄 Обновляем учебный документ...")
                     st.session_state["lecture_doc"] = build_lecture_docx(
                         updated_lecture,
@@ -565,8 +646,10 @@ elif mode == "Лекция":
                         course=course,
                         lesson_date=lesson_date,
                     )
+                    _log_create_event(material_type, "document generation completed", subject, topic)
                 st.rerun()
-            except (AIServiceError, SupabaseServiceError) as error:
+            except Exception as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()
 else:
     st.info("Генератор практического занятия и презентации будет подключён к этому занятию без создания новой темы.")
