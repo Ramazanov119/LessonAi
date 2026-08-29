@@ -167,8 +167,9 @@ class SupabaseService:
             response = (
                 self.client.table("lessons")
                 .select(
-                    "id, topic, subject, group_name, course, duration, lesson_date, "
-                    "language, lesson_type, college, created_at"
+                    "id, full_name, topic, subject, group_name, course, duration, "
+                    "lesson_date, language, lesson_type, speciality, chair, college, "
+                    "created_at"
                 )
                 .order("created_at", desc=True)
                 .execute()

@@ -6,7 +6,7 @@ import streamlit as st
 from datetime import date
 
 from config.colleges import get_college_config
-from models import AIConfig, LessonMetadata, TeacherProfile
+from models import AIConfig, LessonMetadata, PresentationSlide, TeacherProfile
 from services.ai import (
     AIServiceError,
     create_control,
@@ -17,6 +17,7 @@ from services.ai import (
     rework_lecture,
 )
 from services.docx_generator import build_doc, build_lecture_docx
+from services.presentation_generator import build_presentation
 from services.preview_renderer import generation_status, render_document_preview
 from services.supabase_service import (
     ALLOWED_COLLEGES,
@@ -176,6 +177,12 @@ MATERIAL_LABELS = {
     "practice": ("🛠", "Практическое занятие"),
     "presentation": ("🎨", "Презентация"),
 }
+MATERIAL_MODE_LABELS = {
+    "lesson_plan": "Поурочный план",
+    "lecture": "Лекция",
+    "practice": "Практическое занятие",
+    "presentation": "Презентация",
+}
 
 WORKSPACE_VIEWS = ["Главная", "Мои занятия", "Создать занятие"]
 
@@ -187,7 +194,59 @@ def _sync_current_page(workspace_view_key):
 
 def _go_to_create_lesson():
     """Navigate from the home CTA before widgets are built on the next rerun."""
+    st.session_state.pop("selected_lesson_id", None)
+    st.session_state.pop("requested_material_type", None)
     st.session_state["current_page"] = "Создать занятие"
+
+
+def _open_material_creator(lesson_id, material_type):
+    """Open the material form bound to an existing lesson without creating XP."""
+    st.session_state["selected_lesson_id"] = lesson_id
+    st.session_state["requested_material_type"] = material_type
+    st.session_state["current_page"] = "Создать занятие"
+
+
+def _material_download(lesson, material):
+    material_type = material["material_type"]
+    content = material["content"]
+    if material_type == "lesson_plan":
+        fields = {
+            "topic": lesson["topic"],
+            "subject": lesson["subject"],
+            "teacher": lesson.get("full_name", ""),
+            "date": str(lesson["lesson_date"]),
+            "course": lesson["course"],
+            "group": lesson["group_name"],
+            "lesson_type": lesson["lesson_type"],
+        }
+        return "Скачать DOCX", build_doc(
+            "План урока",
+            content,
+            template_path=get_college_config(lesson["college"])["template"],
+            fields=fields,
+        ), "lesson.docx"
+    if material_type == "lecture":
+        return "Скачать DOCX", build_lecture_docx(
+            content,
+            title=f"Лекция: {lesson['topic']}",
+            college=lesson["college"],
+            subject=lesson["subject"],
+            teacher=lesson.get("full_name", ""),
+            group=lesson["group_name"],
+            course=lesson["course"],
+            lesson_date=date.fromisoformat(str(lesson["lesson_date"])),
+        ), "lecture.docx"
+    if material_type == "presentation":
+        try:
+            payload = json.loads(content)
+        except (TypeError, json.JSONDecodeError):
+            payload = {"content": content}
+        slides = [
+            PresentationSlide("Схема", str(payload.get("schema", ""))),
+            PresentationSlide("Иллюстрация", str(payload.get("visual", ""))),
+        ]
+        return "Скачать PPTX", build_presentation(lesson["topic"], slides), "presentation.pptx"
+    return "Скачать DOCX", build_doc("Практическое занятие", content), "practice.docx"
 
 
 def _render_lesson_card(lesson, materials):
@@ -249,8 +308,9 @@ def _render_lesson_workspace(service, lessons):
         with cards[index % 2]:
             try:
                 materials = service.list_materials(lesson["id"])
-            except SupabaseServiceError:
-                materials = []
+            except SupabaseServiceError as error:
+                st.error(str(error))
+                continue
             if _render_lesson_card(lesson, materials):
                 st.session_state["selected_lesson_id"] = lesson["id"]
                 st.rerun()
@@ -269,8 +329,52 @@ def _render_lesson_workspace(service, lessons):
         detail_columns = st.columns(2, gap="medium")
         for index, (material_type, (_, label)) in enumerate(MATERIAL_LABELS.items()):
             with detail_columns[index % 2]:
-                state = "Создан" if material_type in material_map else "Не создан"
-                st.markdown(f"**{label}**  \n{state}")
+                material = material_map.get(material_type)
+                if material is None:
+                    st.markdown(f"○ **{label}**  \nНе создан")
+                    st.button(
+                        f"Создать {label.lower()}",
+                        key=f"create_{selected['id']}_{material_type}",
+                        on_click=_open_material_creator,
+                        args=(selected["id"], material_type),
+                    )
+                    continue
+
+                st.markdown(f"✓ **{label}**  \nСоздан")
+                open_column, download_column, rework_column = st.columns(3)
+                with open_column:
+                    if st.button("Открыть", key=f"view_{selected['id']}_{material_type}"):
+                        st.session_state["opened_material_id"] = material["id"]
+                with download_column:
+                    download_label, document, filename = _material_download(selected, material)
+                    st.download_button(
+                        download_label,
+                        document,
+                        filename,
+                        key=f"download_{selected['id']}_{material_type}",
+                    )
+                with rework_column:
+                    st.button(
+                        "Переработать",
+                        key=f"rework_{selected['id']}_{material_type}",
+                        on_click=_open_material_creator,
+                        args=(selected["id"], material_type),
+                    )
+
+        opened_id = st.session_state.get("opened_material_id")
+        opened_material = next((item for item in materials if item["id"] == opened_id), None)
+        if opened_material and opened_material["material_type"] != "presentation":
+            render_document_preview(
+                opened_material["content"],
+                MATERIAL_MODE_LABELS[opened_material["material_type"]],
+                {
+                    "college": selected["college"],
+                    "teacher": selected.get("full_name", ""),
+                    "subject": selected["subject"],
+                    "topic": selected["topic"],
+                    "date": str(selected["lesson_date"]),
+                },
+            )
 
 
 def _material_content(content):
@@ -364,31 +468,61 @@ if current_page in ("Главная", "Мои занятия"):
         )
     st.stop()
 
+selected_lesson = next(
+    (lesson for lesson in lessons if lesson["id"] == st.session_state.get("selected_lesson_id")),
+    None,
+)
+requested_material_type = st.session_state.get("requested_material_type")
+material_options = list(MATERIAL_MODE_LABELS.values())
+requested_mode = MATERIAL_MODE_LABELS.get(requested_material_type)
 mode = st.radio(
     "Материал",
-    ["Поурочный план", "Лекция", "Практическое занятие", "Презентация"],
+    material_options,
+    index=material_options.index(requested_mode) if requested_mode else 0,
     horizontal=True,
+    disabled=selected_lesson is not None and requested_mode is not None,
 )
 college_config = get_college_config(teacher_profile.college)
+selected_college = selected_lesson["college"] if selected_lesson else teacher_profile.college
+college_config = get_college_config(selected_college)
+selected_specialty = selected_lesson.get("speciality", "Не указано") if selected_lesson else None
+selected_chair = selected_lesson.get("chair", "Не указано") if selected_lesson else None
 specialties = college_config["specialties"] or ["Не указано"]
 pck_chairs = college_config["pck_chairs"] or ["Не указано"]
+if selected_specialty and selected_specialty not in specialties:
+    specialties = [selected_specialty, *specialties]
+if selected_chair and selected_chair not in pck_chairs:
+    pck_chairs = [selected_chair, *pck_chairs]
+form_key_suffix = selected_lesson["id"] if selected_lesson else "new"
 form_left, form_right = st.columns(2, gap="large")
 with form_left:
     teacher_name = st.text_input(
-        "ФИО преподавателя", value=teacher_profile.full_name, disabled=True
+        "ФИО преподавателя",
+        value=selected_lesson.get("full_name", teacher_profile.full_name) if selected_lesson else teacher_profile.full_name,
+        disabled=True,
+        key=f"teacher_name_{form_key_suffix}",
     )
-    topic = st.text_input("Тема")
-    course = st.selectbox("Курс", [1, 2, 3, 4])
-    language = st.selectbox("Язык", ["Русский", "Қазақша"])
+    topic = st.text_input("Тема", value=selected_lesson["topic"] if selected_lesson else "", disabled=selected_lesson is not None, key=f"topic_{form_key_suffix}")
+    course = st.selectbox("Курс", [1, 2, 3, 4], index=[1, 2, 3, 4].index(selected_lesson["course"]) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"course_{form_key_suffix}")
+    language = st.selectbox("Язык", ["Русский", "Қазақша"], index=["Русский", "Қазақша"].index(selected_lesson["language"]) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"language_{form_key_suffix}")
 with form_right:
-    subject = st.text_input("Предмет")
-    group_name = st.text_input("Группа")
-    lesson_date = st.date_input("Дата урока", value=date.today())
-    specialty = st.selectbox("Специальность", specialties)
-pck = st.selectbox("Председатель ПЦК", pck_chairs)
+    subject = st.text_input("Предмет", value=selected_lesson["subject"] if selected_lesson else "", disabled=selected_lesson is not None, key=f"subject_{form_key_suffix}")
+    group_name = st.text_input("Группа", value=selected_lesson["group_name"] if selected_lesson else "", disabled=selected_lesson is not None, key=f"group_{form_key_suffix}")
+    lesson_date = st.date_input("Дата урока", value=date.fromisoformat(str(selected_lesson["lesson_date"])) if selected_lesson else date.today(), disabled=selected_lesson is not None, key=f"date_{form_key_suffix}")
+    specialty = st.selectbox("Специальность", specialties, index=specialties.index(selected_specialty) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"specialty_{form_key_suffix}")
+pck = st.selectbox("Председатель ПЦК", pck_chairs, index=pck_chairs.index(selected_chair) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"pck_{form_key_suffix}")
 
 if mode == "Поурочный план":
-    lesson_type = st.selectbox("Тип урока", LESSON_TYPES)
+    lesson_type_options = LESSON_TYPES.copy()
+    if selected_lesson and selected_lesson["lesson_type"] not in lesson_type_options:
+        lesson_type_options.insert(0, selected_lesson["lesson_type"])
+    lesson_type = st.selectbox(
+        "Тип урока",
+        lesson_type_options,
+        index=lesson_type_options.index(selected_lesson["lesson_type"]) if selected_lesson else 0,
+        disabled=selected_lesson is not None,
+        key=f"lesson_type_{form_key_suffix}",
+    )
     if st.button("Создать план урока", type="primary", icon="✨"):
         required_fields = {
             "ФИО преподавателя": teacher_name,
@@ -401,7 +535,7 @@ if mode == "Поурочный план":
         ]
         if missing_fields:
             st.error("Заполните поля: " + ", ".join(missing_fields) + ".")
-        elif daily_count >= DAILY_LESSON_LIMIT:
+        elif selected_lesson is None and daily_count >= DAILY_LESSON_LIMIT:
             st.error(f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий.")
         else:
             material_type = "lesson_plan"
@@ -421,25 +555,28 @@ if mode == "Поурочный план":
                     _log_create_event(material_type, "AI generation completed", subject, topic)
                     progress.write("🎯 Формируем цели обучения...")
                     progress.write("⏱️ Распределяем этапы занятия...")
-                    stage = "lesson creation"
-                    _log_create_event(material_type, "lesson creation started", subject, topic)
-                    saved_lesson = SUPABASE_SERVICE.create_lesson(
-                        LessonMetadata(
-                            full_name=teacher_profile.full_name,
-                            college=teacher_profile.college,
-                            subject=subject.strip(),
-                            topic=topic.strip(),
-                            group_name=group_name.strip(),
-                            course=course,
-                            duration=FIXED_LESSON_DURATION,
-                            lesson_date=lesson_date,
-                            language=language,
-                            lesson_type=lesson_type,
-                            speciality=specialty,
-                            chair=pck,
+                    if selected_lesson:
+                        saved_lesson = {"lesson_id": selected_lesson["id"], "daily_count": daily_count}
+                    else:
+                        stage = "lesson creation"
+                        _log_create_event(material_type, "lesson creation started", subject, topic)
+                        saved_lesson = SUPABASE_SERVICE.create_lesson(
+                            LessonMetadata(
+                                full_name=teacher_profile.full_name,
+                                college=teacher_profile.college,
+                                subject=subject.strip(),
+                                topic=topic.strip(),
+                                group_name=group_name.strip(),
+                                course=course,
+                                duration=FIXED_LESSON_DURATION,
+                                lesson_date=lesson_date,
+                                language=language,
+                                lesson_type=lesson_type,
+                                speciality=specialty,
+                                chair=pck,
+                            )
                         )
-                    )
-                    _log_create_event(material_type, "lesson created", subject, topic)
+                        _log_create_event(material_type, "lesson created", subject, topic)
                     stage = "material save"
                     _log_create_event(material_type, "material save started", subject, topic)
                     SUPABASE_SERVICE.upsert_material(
@@ -483,7 +620,13 @@ if mode == "Поурочный план":
                 _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()
 elif mode == "Лекция":
-    lecture_type = st.selectbox("Тип лекции", ["Лекция", "Обзорная лекция", "Профессиональная лекция"])
+    lecture_types = ["Лекция", "Обзорная лекция", "Профессиональная лекция"]
+    lecture_type = st.selectbox(
+        "Тип лекции",
+        lecture_types,
+        disabled=selected_lesson is not None,
+        key=f"lecture_type_{form_key_suffix}",
+    )
     if st.button("Создать лекцию", type="primary", icon="✨"):
         required_fields = {
             "ФИО преподавателя": teacher_name,
@@ -512,25 +655,28 @@ elif mode == "Лекция":
                         subject, topic, language, specialty, pck, lecture_type, AI_CONFIG
                     )
                     _log_create_event(material_type, "AI generation completed", subject, topic)
-                    stage = "lesson creation"
-                    _log_create_event(material_type, "lesson creation started", subject, topic)
-                    saved_lesson = SUPABASE_SERVICE.create_lesson(
-                        LessonMetadata(
-                            full_name=teacher_profile.full_name,
-                            college=teacher_profile.college,
-                            subject=subject.strip(),
-                            topic=topic.strip(),
-                            group_name=group_name.strip(),
-                            course=course,
-                            duration=FIXED_LESSON_DURATION,
-                            lesson_date=lesson_date,
-                            language=language,
-                            lesson_type=lecture_type,
-                            speciality=specialty,
-                            chair=pck,
+                    if selected_lesson:
+                        saved_lesson = {"lesson_id": selected_lesson["id"], "daily_count": daily_count}
+                    else:
+                        stage = "lesson creation"
+                        _log_create_event(material_type, "lesson creation started", subject, topic)
+                        saved_lesson = SUPABASE_SERVICE.create_lesson(
+                            LessonMetadata(
+                                full_name=teacher_profile.full_name,
+                                college=teacher_profile.college,
+                                subject=subject.strip(),
+                                topic=topic.strip(),
+                                group_name=group_name.strip(),
+                                course=course,
+                                duration=FIXED_LESSON_DURATION,
+                                lesson_date=lesson_date,
+                                language=language,
+                                lesson_type=lecture_type,
+                                speciality=specialty,
+                                chair=pck,
+                            )
                         )
-                    )
-                    _log_create_event(material_type, "lesson created", subject, topic)
+                        _log_create_event(material_type, "lesson created", subject, topic)
                     st.session_state["selected_lesson_id"] = saved_lesson["lesson_id"]
                     stage = "material save"
                     _log_create_event(material_type, "material save started", subject, topic)
@@ -647,5 +793,59 @@ elif mode == "Лекция":
             except Exception as error:
                 _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()
+elif mode == "Практическое занятие":
+    if st.button("Создать практическое занятие", type="primary", icon="✨"):
+        if selected_lesson is None:
+            st.error("Сначала создайте занятие с поурочным планом или лекцией.")
+        else:
+            material_type = "practice"
+            stage = "AI generation"
+            _log_create_event(material_type, "start", subject, topic)
+            try:
+                with generation_status("Создаём практическое занятие", ["✓ Материал готов"]) as progress:
+                    _log_create_event(material_type, "AI generation started", subject, topic)
+                    content = create_control(subject, topic, language, specialty, "Средняя", 10, AI_CONFIG)
+                    _log_create_event(material_type, "AI generation completed", subject, topic)
+                    stage = "material save"
+                    _log_create_event(material_type, "material save started", subject, topic)
+                    SUPABASE_SERVICE.upsert_material(selected_lesson["id"], material_type, _material_content(content))
+                    _log_create_event(material_type, "material saved", subject, topic)
+                    stage = "document generation"
+                    document = build_doc("Практическое занятие", content)
+                stage = "preview"
+                _log_create_event(material_type, "preview started", subject, topic)
+                render_document_preview(content, "Практическое занятие", _preview_metadata(teacher_profile, subject, topic, lesson_date))
+                st.download_button("Скачать DOCX", document, "practice.docx", type="secondary")
+                _log_create_event(material_type, "completed", subject, topic)
+            except Exception as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
+                _show_generation_error()
 else:
-    st.info("Генератор практического занятия и презентации будет подключён к этому занятию без создания новой темы.")
+    if st.button("Создать презентацию", type="primary", icon="✨"):
+        if selected_lesson is None:
+            st.error("Сначала создайте занятие с поурочным планом или лекцией.")
+        else:
+            material_type = "presentation"
+            stage = "AI generation"
+            _log_create_event(material_type, "start", subject, topic)
+            try:
+                with generation_status("Создаём презентацию", ["✓ Материал готов"]) as progress:
+                    _log_create_event(material_type, "AI generation started", subject, topic)
+                    schema = create_schema(topic, AI_CONFIG)
+                    visual = create_visual(topic, AI_CONFIG)
+                    content = {"schema": schema, "visual": visual}
+                    _log_create_event(material_type, "AI generation completed", subject, topic)
+                    stage = "material save"
+                    _log_create_event(material_type, "material save started", subject, topic)
+                    SUPABASE_SERVICE.upsert_material(selected_lesson["id"], material_type, _material_content(content))
+                    _log_create_event(material_type, "material saved", subject, topic)
+                    stage = "document generation"
+                    document = build_presentation(
+                        topic,
+                        [PresentationSlide("Схема", schema), PresentationSlide("Иллюстрация", visual)],
+                    )
+                st.download_button("Скачать PPTX", document, "presentation.pptx", type="secondary")
+                _log_create_event(material_type, "completed", subject, topic)
+            except Exception as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
+                _show_generation_error()
