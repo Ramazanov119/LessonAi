@@ -277,6 +277,93 @@ def create_control(subject, topic, language, specialty, difficulty, count, confi
     return openai_generate(prompt, system, config)
 
 
+def create_practice(
+    subject,
+    topic,
+    language,
+    specialty,
+    lesson_type,
+    *,
+    lesson_plan=None,
+    lecture=None,
+    config,
+):
+    """Create a hands-on, 70-minute practice aligned to its lesson materials."""
+    system = """
+Ты методист колледжа Казахстана. Создай практическое занятие, в котором
+студент выполняет реальную профессиональную работу, а не пересказывает лекцию.
+
+Верни только корректный JSON без markdown и текста вне JSON. Обязательная структура:
+{
+  "title": "строка",
+  "objective": "строка",
+  "learning_outcomes": ["строка"],
+  "required_tools": ["строка"],
+  "safety_notes": ["строка"],
+  "brief_theory": "строка",
+  "professional_context": "строка",
+  "main_task": "строка",
+  "task_steps": ["строка"],
+  "individual_variants": ["строка"],
+  "expected_result": "строка",
+  "evaluation_criteria": [{"criterion": "строка", "weight": "число%"}],
+  "control_questions": ["строка"],
+  "reflection": ["строка"],
+  "conclusion": "строка",
+  "time_allocation": [{"stage": "строка", "minutes": число}]
+}
+
+Правила качества:
+- Практика должна соответствовать теме и специальности, быть выполнимой за 70 минут.
+- Дай 3–5 измеримых результатов, 5–10 конкретных шагов и 5–7 контрольных вопросов.
+- Теория занимает не более 10–15% материала; основная часть — практическая работа.
+- Профессиональная ситуация, основное задание и ожидаемый результат должны быть конкретными.
+- Если техника безопасности не требуется, верни пустой массив safety_notes.
+- Время в time_allocation обязано суммарно равняться 70 минутам.
+"""
+    prompt = f"""
+Создай учебно-методическое практическое занятие.
+
+Предмет: {subject}
+Тема: {topic}
+Язык: {language}
+Специальность: {specialty}
+Тип урока: {lesson_type}
+
+Используй следующий контекст уже созданных материалов, если он передан. Не меняй тему.
+
+Поурочный план:
+{lesson_plan or "Не создан"}
+
+Лекция:
+{lecture or "Не создана"}
+"""
+    return openai_generate(prompt, system, config)
+
+
+def rework_practice(practice_text, style, *, lesson_plan=None, lecture=None, config):
+    """Improve an existing practice without changing its lesson or duration."""
+    system = """
+Ты методист колледжа. Переработай практическое занятие, сохранив его тему,
+структуру JSON и длительность 70 минут. Верни только корректный JSON в той же
+структуре, без markdown и текста вне JSON. Практика должна оставаться конкретной,
+профессиональной и выполнимой в рамках одного занятия.
+"""
+    prompt = f"""
+Текущее практическое занятие:
+{practice_text}
+
+Вариант переработки: {style}
+
+Контекст поурочного плана:
+{lesson_plan or "Не создан"}
+
+Контекст лекции:
+{lecture or "Не создана"}
+"""
+    return openai_generate(prompt, system, config)
+
+
 def create_schema(topic, config):
     prompt = f"""
 

@@ -12,11 +12,13 @@ from services.ai import (
     create_control,
     create_lesson,
     create_lecture,
+    create_practice,
     create_schema,
     create_visual,
     rework_lecture,
+    rework_practice,
 )
-from services.docx_generator import build_doc, build_lecture_docx
+from services.docx_generator import build_doc, build_lecture_docx, build_practice_docx
 from services.presentation_generator import build_presentation
 from services.preview_renderer import generation_status, render_document_preview
 from services.supabase_service import (
@@ -246,7 +248,14 @@ def _material_download(lesson, material):
             PresentationSlide("Иллюстрация", str(payload.get("visual", ""))),
         ]
         return "Скачать PPTX", build_presentation(lesson["topic"], slides), "presentation.pptx"
-    return "Скачать DOCX", build_doc("Практическое занятие", content), "practice.docx"
+    return "Скачать DOCX", build_practice_docx(
+        content,
+        title=f"Практическое занятие: {lesson['topic']}",
+        college=lesson["college"],
+        subject=lesson["subject"],
+        teacher=lesson.get("full_name", ""),
+        lesson_date=date.fromisoformat(str(lesson["lesson_date"])),
+    ), "practice.docx"
 
 
 def _render_lesson_card(lesson, materials):
@@ -794,9 +803,75 @@ elif mode == "Лекция":
                 _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()
 elif mode == "Практическое занятие":
-    if st.button("Создать практическое занятие", type="primary", icon="✨"):
-        if selected_lesson is None:
-            st.error("Сначала создайте занятие с поурочным планом или лекцией.")
+    practice_material = None
+    lesson_context = {}
+    if selected_lesson:
+        try:
+            lesson_context = {
+                item["material_type"]: item["content"]
+                for item in SUPABASE_SERVICE.list_materials(selected_lesson["id"])
+            }
+            practice_material = lesson_context.get("practice")
+        except SupabaseServiceError as error:
+            st.error(str(error))
+
+    if practice_material:
+        practice_document = build_practice_docx(
+            practice_material,
+            title=f"Практическое занятие: {topic}",
+            college=selected_lesson["college"],
+            subject=subject,
+            teacher=selected_lesson.get("full_name", teacher_profile.full_name),
+            lesson_date=lesson_date,
+        )
+        render_document_preview(
+            practice_material,
+            "Практическое занятие",
+            _preview_metadata(teacher_profile, subject, topic, lesson_date),
+        )
+        st.download_button("Скачать DOCX", practice_document, "practice.docx", type="secondary")
+        rework_mode = st.selectbox(
+            "Переработать практическое занятие",
+            [
+                "Сделать практику более реальной",
+                "Добавить профессиональный кейс",
+                "Усложнить задание",
+                "Упростить задание",
+                "Добавить индивидуальные варианты",
+                "Сделать практику более конкретной",
+                "Улучшить критерии оценки",
+                "Полностью переработать",
+            ],
+            key=f"practice_rework_{form_key_suffix}",
+        )
+        if st.button("Применить переработку", key=f"practice_rework_button_{form_key_suffix}", type="secondary", icon="🔄"):
+            material_type = "practice"
+            stage = "AI generation"
+            _log_create_event(material_type, "start", subject, topic)
+            try:
+                with generation_status("Перерабатываем практическое занятие", ["✓ Материал готов"]) as progress:
+                    _log_create_event(material_type, "AI generation started", subject, topic)
+                    updated_practice = rework_practice(
+                        practice_material,
+                        rework_mode,
+                        lesson_plan=lesson_context.get("lesson_plan"),
+                        lecture=lesson_context.get("lecture"),
+                        config=AI_CONFIG,
+                    )
+                    _log_create_event(material_type, "AI generation completed", subject, topic)
+                    stage = "material save"
+                    SUPABASE_SERVICE.upsert_material(selected_lesson["id"], material_type, _material_content(updated_practice))
+                st.rerun()
+            except Exception as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
+                _show_generation_error()
+    elif st.button("Создать практическое занятие", type="primary", icon="✨"):
+        required_fields = {"Предмет": subject, "Тема": topic, "Группа": group_name}
+        missing_fields = [name for name, value in required_fields.items() if not value.strip()]
+        if missing_fields:
+            st.error("Заполните поля: " + ", ".join(missing_fields) + ".")
+        elif selected_lesson is None and daily_count >= DAILY_LESSON_LIMIT:
+            st.error(f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий.")
         else:
             material_type = "practice"
             stage = "AI generation"
@@ -804,16 +879,35 @@ elif mode == "Практическое занятие":
             try:
                 with generation_status("Создаём практическое занятие", ["✓ Материал готов"]) as progress:
                     _log_create_event(material_type, "AI generation started", subject, topic)
-                    content = create_control(subject, topic, language, specialty, "Средняя", 10, AI_CONFIG)
+                    content = create_practice(
+                        subject, topic, language, specialty, "Практикалық сабақ",
+                        lesson_plan=lesson_context.get("lesson_plan"),
+                        lecture=lesson_context.get("lecture"),
+                        config=AI_CONFIG,
+                    )
                     _log_create_event(material_type, "AI generation completed", subject, topic)
+                    if selected_lesson:
+                        saved_lesson = {"lesson_id": selected_lesson["id"], "daily_count": daily_count}
+                    else:
+                        stage = "lesson creation"
+                        saved_lesson = SUPABASE_SERVICE.create_lesson(
+                            LessonMetadata(
+                                full_name=teacher_profile.full_name,
+                                college=teacher_profile.college,
+                                subject=subject.strip(), topic=topic.strip(), group_name=group_name.strip(),
+                                course=course, duration=FIXED_LESSON_DURATION, lesson_date=lesson_date,
+                                language=language, lesson_type="Практикалық сабақ", speciality=specialty, chair=pck,
+                            )
+                        )
+                    st.session_state["selected_lesson_id"] = saved_lesson["lesson_id"]
                     stage = "material save"
-                    _log_create_event(material_type, "material save started", subject, topic)
-                    SUPABASE_SERVICE.upsert_material(selected_lesson["id"], material_type, _material_content(content))
-                    _log_create_event(material_type, "material saved", subject, topic)
+                    SUPABASE_SERVICE.upsert_material(saved_lesson["lesson_id"], material_type, _material_content(content))
+                    daily_count = saved_lesson.get("daily_count", daily_count)
                     stage = "document generation"
-                    document = build_doc("Практическое занятие", content)
-                stage = "preview"
-                _log_create_event(material_type, "preview started", subject, topic)
+                    document = build_practice_docx(
+                        content, title=f"Практическое занятие: {topic}", college=selected_college,
+                        subject=subject, teacher=teacher_name, lesson_date=lesson_date,
+                    )
                 render_document_preview(content, "Практическое занятие", _preview_metadata(teacher_profile, subject, topic, lesson_date))
                 st.download_button("Скачать DOCX", document, "practice.docx", type="secondary")
                 _log_create_event(material_type, "completed", subject, topic)

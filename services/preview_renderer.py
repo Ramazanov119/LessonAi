@@ -127,6 +127,55 @@ def _lecture_body(data):
     return "".join(blocks)
 
 
+def _practice_body(data):
+    blocks = []
+    text_sections = (
+        ("Цель", "objective"),
+        ("Краткая теория", "brief_theory"),
+        ("Профессиональная ситуация", "professional_context"),
+        ("Практическое задание", "main_task"),
+        ("Ожидаемый результат", "expected_result"),
+        ("Заключение", "conclusion"),
+    )
+    for heading, key in text_sections:
+        if data.get(key):
+            blocks += [f"<h1>{heading}</h1>", _paragraph(data[key])]
+
+    list_sections = (
+        ("Ожидаемые результаты", "learning_outcomes"),
+        ("Необходимые инструменты", "required_tools"),
+        ("Техника безопасности", "safety_notes"),
+        ("Пошаговая инструкция", "task_steps"),
+        ("Индивидуальные варианты", "individual_variants"),
+        ("Контрольные вопросы", "control_questions"),
+        ("Рефлексия", "reflection"),
+    )
+    for heading, key in list_sections:
+        if data.get(key):
+            blocks += [f"<h1>{heading}</h1>", _list(data[key])]
+
+    criteria = data.get("evaluation_criteria") or []
+    if criteria:
+        blocks.append("<h1>Критерии оценки</h1><ul>")
+        for item in criteria:
+            if isinstance(item, dict):
+                blocks.append(f"<li>{_safe_text(item.get('criterion', ''))} — {_safe_text(item.get('weight', ''))}</li>")
+            else:
+                blocks.append(f"<li>{_safe_text(item)}</li>")
+        blocks.append("</ul>")
+
+    time_allocation = data.get("time_allocation") or []
+    if time_allocation:
+        blocks.append("<h1>Распределение времени — 70 минут</h1><ul>")
+        for item in time_allocation:
+            if isinstance(item, dict):
+                blocks.append(f"<li>{_safe_text(item.get('stage', ''))}: {_safe_text(item.get('minutes', ''))} мин.</li>")
+            else:
+                blocks.append(f"<li>{_safe_text(item)}</li>")
+        blocks.append("</ul>")
+    return "".join(blocks)
+
+
 def _generic_body(data, document_type):
     blocks = [f"<h1>{_safe_text(document_type)}</h1>"]
     for key, value in data.items():
@@ -145,7 +194,12 @@ def render_document_preview(content, document_type, metadata, *, schema=None, vi
     content = _parse_content(content)
     logo = _logo_data(metadata.get("college"))
     logo_html = f"<img class='ai-edu-logo' src='{logo}' alt='Логотип колледжа'>" if logo else ""
-    body = _lecture_body(content) if document_type == "Лекция" else _generic_body(content, document_type)
+    if document_type == "Лекция":
+        body = _lecture_body(content)
+    elif document_type == "Практическое занятие":
+        body = _practice_body(content)
+    else:
+        body = _generic_body(content, document_type)
     if schema:
         body += f"<h2>Схема</h2>{_paragraph(schema)}"
     if visual:

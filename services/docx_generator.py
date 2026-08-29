@@ -282,3 +282,81 @@ def build_lecture_docx(
     doc.save(file)
     file.seek(0)
     return file
+
+
+def build_practice_docx(
+    practice_text,
+    title="Практическое занятие",
+    *,
+    college=None,
+    subject=None,
+    teacher=None,
+    lesson_date=None,
+):
+    """Build a styled DOCX from the stored structured practice content."""
+    payload = _lesson_fields(practice_text)
+    doc = Document()
+    configure_document(doc)
+    _add_title_page(
+        doc,
+        college=college,
+        subject=subject,
+        title=title,
+        teacher=teacher,
+        lesson_date=lesson_date,
+    )
+
+    sections = (
+        ("Цель", "objective"),
+        ("Краткая теория", "brief_theory"),
+        ("Профессиональная ситуация", "professional_context"),
+        ("Практическое задание", "main_task"),
+        ("Ожидаемый результат", "expected_result"),
+        ("Заключение", "conclusion"),
+    )
+    doc.add_heading(str(payload.get("title", title)), level=1)
+    for heading, key in sections:
+        if payload.get(key):
+            doc.add_heading(heading, level=1)
+            paragraph = doc.add_paragraph(str(payload[key]))
+            normalize_paragraph(paragraph)
+
+    list_sections = (
+        ("Ожидаемые результаты", "learning_outcomes"),
+        ("Необходимые инструменты", "required_tools"),
+        ("Техника безопасности", "safety_notes"),
+        ("Пошаговая инструкция", "task_steps"),
+        ("Индивидуальные варианты", "individual_variants"),
+        ("Контрольные вопросы", "control_questions"),
+        ("Рефлексия", "reflection"),
+    )
+    for heading, key in list_sections:
+        values = payload.get(key) or []
+        if values:
+            doc.add_heading(heading, level=1)
+            for value in values:
+                _add_list_item(doc, str(value))
+
+    criteria = payload.get("evaluation_criteria") or []
+    if criteria:
+        doc.add_heading("Критерии оценки", level=1)
+        for item in criteria:
+            if isinstance(item, dict):
+                _add_list_item(doc, f"{item.get('criterion', '')} — {item.get('weight', '')}")
+            else:
+                _add_list_item(doc, str(item))
+
+    time_allocation = payload.get("time_allocation") or []
+    if time_allocation:
+        doc.add_heading("Распределение времени — 70 минут", level=1)
+        for item in time_allocation:
+            if isinstance(item, dict):
+                _add_list_item(doc, f"{item.get('stage', '')}: {item.get('minutes', '')} мин.")
+            else:
+                _add_list_item(doc, str(item))
+
+    normalize_document_fonts(doc)
+    file = BytesIO()
+    doc.save(file)
+    file.seek(0)
+    return file
