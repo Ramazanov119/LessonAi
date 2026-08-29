@@ -6,6 +6,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Inches, Pt
 
+from config.colleges import get_college_config
 from services.document_style import (
     add_page_number,
     configure_document,
@@ -15,8 +16,7 @@ from services.document_style import (
 )
 
 
-LESSON_TEMPLATE = Path(__file__).resolve().parent.parent / "template.docx"
-LOGO_DIR = Path(__file__).resolve().parent.parent / "assets" / "logos"
+LESSON_TEMPLATE = get_college_config("ETEC")["template"]
 
 
 def _add_block(doc, title, body):
@@ -28,16 +28,7 @@ def _add_block(doc, title, body):
 
 
 def _get_logo_path(college):
-    if not college:
-        return None
-    college_key = str(college).upper()
-    if college_key == "ETEC":
-        logo_name = "etec.png"
-    elif college_key == "META":
-        logo_name = "meta.png"
-    else:
-        return None
-    logo_path = LOGO_DIR / logo_name
+    logo_path = get_college_config(college)["logo"]
     return logo_path if logo_path.exists() else None
 
 

@@ -5,6 +5,7 @@ import logging
 import streamlit as st
 from datetime import date
 
+from config.colleges import get_college_config
 from models import AIConfig, LessonMetadata, TeacherProfile
 from services.ai import (
     AIServiceError,
@@ -44,19 +45,6 @@ AI_CONFIG = AIConfig(
     openai_api_key=OPENAI_API_KEY,
     openrouter_api_key=OPENROUTER_API_KEY,
 )
-
-SPECIALTIES = [
-    "04130100-Менеджмент (қолдану салалары бойынша)/(по отраслям и по областям)",
-    "04110100-Есеп және аудит/Учет и аудит",
-    "04210100-Құқықтану/Правоведение",
-    "06120100-Есептеу техникасы және ақпараттық желілер/Вычислительная техника и информационные сети",
-    "10410300-Автомобиль көлігінде тасымалдауды ұйымдастыру және қозғалысты басқару/Организация перевозок и управление движением на автомобильном транспорте",
-    "06130100-Бағдарламалық қызмет ету (түрлері бойынша)/Программное обеспечение (по видам)",
-    "07130700-Электромеханикалық жабдықтарға техникалық қызмет көрсету, жөндеу және пайдалану",
-    "07161300-Автомобиль көлігіне техникалық қызмет көрсету және пайдалану",
-]
-
-PCK_HEADS = ["Мавияева М.Д.", "Утегенова А.А.", "Серік А.М."]
 
 LESSON_TYPES = [
     "Жаңа сабақ",
@@ -104,8 +92,8 @@ def _render_auth_screen(service):
             key="registration_college",
         )
         college_logo_left, college_logo_right = st.columns(2)
-        college_logo_left.image("assets/logos/etec.png", width=120)
-        college_logo_right.image("assets/logos/meta.png", width=120)
+        college_logo_left.image(get_college_config("ETEC")["logo"], width=120)
+        college_logo_right.image(get_college_config("META")["logo"], width=120)
         if st.button("Зарегистрироваться", key="registration_button", type="primary"):
             if not registration_name.strip():
                 st.error("Укажите ФИО преподавателя.")
@@ -381,6 +369,9 @@ mode = st.radio(
     ["Поурочный план", "Лекция", "Практическое занятие", "Презентация"],
     horizontal=True,
 )
+college_config = get_college_config(teacher_profile.college)
+specialties = college_config["specialties"] or ["Не указано"]
+pck_chairs = college_config["pck_chairs"] or ["Не указано"]
 form_left, form_right = st.columns(2, gap="large")
 with form_left:
     teacher_name = st.text_input(
@@ -393,8 +384,8 @@ with form_right:
     subject = st.text_input("Предмет")
     group_name = st.text_input("Группа")
     lesson_date = st.date_input("Дата урока", value=date.today())
-    specialty = st.selectbox("Специальность", SPECIALTIES)
-pck = st.selectbox("Председатель ПЦК", PCK_HEADS)
+    specialty = st.selectbox("Специальность", specialties)
+pck = st.selectbox("Председатель ПЦК", pck_chairs)
 
 if mode == "Поурочный план":
     lesson_type = st.selectbox("Тип урока", LESSON_TYPES)
@@ -469,7 +460,12 @@ if mode == "Поурочный план":
                     stage = "document generation"
                     _log_create_event(material_type, "document generation started", subject, topic)
                     progress.write("📄 Подготавливаем документ...")
-                    doc = build_doc("План урока", lesson, fields=lesson_fields)
+                    doc = build_doc(
+                        "План урока",
+                        lesson,
+                        template_path=college_config["template"],
+                        fields=lesson_fields,
+                    )
                     _log_create_event(material_type, "document generation completed", subject, topic)
                 stage = "preview"
                 _log_create_event(material_type, "preview started", subject, topic)

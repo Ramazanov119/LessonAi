@@ -2,13 +2,10 @@ import base64
 import html
 import json
 from contextlib import contextmanager
-from pathlib import Path
 
 import streamlit as st
 
-
-_LOGO_DIR = Path(__file__).resolve().parent.parent / "assets" / "logos"
-
+from config.colleges import get_college_config
 
 @contextmanager
 def generation_status(title, steps):
@@ -43,11 +40,7 @@ def _parse_content(content):
 
 
 def _logo_data(college):
-    college_key = str(college or "").upper()
-    logo_name = {"ETEC": "etec.png", "META": "meta.png"}.get(college_key)
-    if not logo_name:
-        return ""
-    path = _LOGO_DIR / logo_name
+    path = get_college_config(college)["logo"]
     if not path.exists():
         return ""
     encoded = base64.b64encode(path.read_bytes()).decode("ascii")
