@@ -163,6 +163,18 @@ MATERIAL_LABELS = {
     "presentation": ("🎨", "Презентация"),
 }
 
+WORKSPACE_VIEWS = ["Главная", "Мои занятия", "Создать занятие"]
+
+
+def _sync_current_page(workspace_view_key):
+    """Keep navigation state in sync with the workspace selector callback."""
+    st.session_state["current_page"] = st.session_state[workspace_view_key]
+
+
+def _go_to_create_lesson():
+    """Navigate from the home CTA before widgets are built on the next rerun."""
+    st.session_state["current_page"] = "Создать занятие"
+
 
 def _render_lesson_card(lesson, materials):
     material_types = {item["material_type"] for item in materials}
@@ -308,13 +320,21 @@ except SupabaseServiceError as error:
     lessons = []
     st.error(str(error))
 
-workspace_view = st.radio(
+if "current_page" not in st.session_state:
+    st.session_state["current_page"] = "Главная"
+
+current_page = st.session_state["current_page"]
+workspace_view_key = f"workspace_view_{current_page}"
+st.radio(
     "Раздел",
-    ["Главная", "Мои занятия", "Создать занятие"],
+    WORKSPACE_VIEWS,
+    index=WORKSPACE_VIEWS.index(current_page),
     horizontal=True,
-    key="workspace_view",
+    key=workspace_view_key,
+    on_change=_sync_current_page,
+    args=(workspace_view_key,),
 )
-if workspace_view in ("Главная", "Мои занятия"):
+if current_page in ("Главная", "Мои занятия"):
     st.markdown(
         f"<div class='ai-edu-panel'><h2>Добро пожаловать, "
         f"{html.escape(teacher_profile.full_name)}</h2>"
@@ -322,9 +342,12 @@ if workspace_view in ("Главная", "Мои занятия"):
         unsafe_allow_html=True,
     )
     _render_lesson_workspace(SUPABASE_SERVICE, lessons)
-    if workspace_view == "Главная" and st.button("+ Создать занятие", type="primary"):
-        st.session_state["workspace_view"] = "Создать занятие"
-        st.rerun()
+    if current_page == "Главная":
+        st.button(
+            "+ Создать занятие",
+            type="primary",
+            on_click=_go_to_create_lesson,
+        )
     st.stop()
 
 mode = st.radio(
