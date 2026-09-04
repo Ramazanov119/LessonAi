@@ -107,10 +107,14 @@ def create_lesson(subject, topic, language, specialty, pck, lesson_type, config)
 goal, tasks, results, resources, org_steps, presentation_resource,
 theory, presentation_demo, practice, practice_result, peer_assessment,
 reflection, assessment_sheet, homework, actualization, actualization_resource,
-assessment, time1, time2, time3, time4, time5,
+assessment, evaluation_criteria, time1, time2, time3, time4, time5,
 time6, time7.
 
 Заполняй каждый раздел содержательно и не оставляй поля пустыми.
+
+Поле evaluation_criteria должно содержать конкретные критерии оценивания
+результатов работы студентов по теме урока. Критерии должны быть измеримыми,
+понятными преподавателю и соответствовать содержанию практической части урока.
 
 """
     prompt = f"""
