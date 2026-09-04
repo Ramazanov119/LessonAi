@@ -142,6 +142,35 @@ def _fill_document(doc, fields):
                 for paragraph in cell.paragraphs:
                     _replace_placeholders(paragraph, fields)
 
+#ToDo: Consider adding support for nested placeholders in tables and other complex structures if needed.
+def _meta_template_fields(content):
+    payload = _lesson_fields(content)
+
+    return {
+        "time1": payload.get("time1", ""),
+        "org_steps": payload.get("org_steps", ""),
+
+        "time2": payload.get("time2", ""),
+        "actualization": payload.get("actualization", ""),
+        "actualization_resource": payload.get("actualization_resource", ""),
+
+        "time3": payload.get("time3", ""),
+        "theory": payload.get("theory", ""),
+        "presentation_demo": payload.get("presentation_demo", ""),
+
+        "time4": payload.get("time4", ""),
+        "practice": payload.get("practice", ""),
+        "practice_result": payload.get("practice_result", ""),
+
+        "time5": payload.get("time5", ""),
+        "peer_assessment": payload.get("peer_assessment", ""),
+
+        "time6": payload.get("time6", ""),
+        "reflection": payload.get("reflection", ""),
+        "assessment_sheet": payload.get("assessment_sheet", ""),
+
+        "homework": payload.get("homework", ""),
+    }
 
 def build_doc(
     title,
