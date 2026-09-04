@@ -167,6 +167,7 @@ def _meta_template_fields(content):
 
         "time6": payload.get("time6", ""),
         "reflection": payload.get("reflection", ""),
+        "assessment": payload.get("assessment", ""),
         "assessment_sheet": payload.get("assessment_sheet", ""),
 
         "homework": payload.get("homework", ""),

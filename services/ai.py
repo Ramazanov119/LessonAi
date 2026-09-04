@@ -106,7 +106,8 @@ def create_lesson(subject, topic, language, specialty, pck, lesson_type, config)
 непустые строковые поля:
 goal, tasks, results, resources, org_steps, presentation_resource,
 theory, presentation_demo, practice, practice_result, peer_assessment,
-reflection, assessment_sheet, homework, time1, time2, time3, time4, time5,
+reflection, assessment_sheet, homework, actualization, actualization_resource,
+assessment, time1, time2, time3, time4, time5,
 time6, time7.
 
 Заполняй каждый раздел содержательно и не оставляй поля пустыми.
