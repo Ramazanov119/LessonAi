@@ -513,7 +513,7 @@ with form_left:
     )
     topic = st.text_input("Тема", value=selected_lesson["topic"] if selected_lesson else "", disabled=selected_lesson is not None, key=f"topic_{form_key_suffix}")
     course = st.selectbox("Курс", [1, 2, 3, 4], index=[1, 2, 3, 4].index(selected_lesson["course"]) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"course_{form_key_suffix}")
-    language = st.selectbox("Язык", ["Русский", "Қазақша"], index=["Русский", "Қазақша"].index(selected_lesson["language"]) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"language_{form_key_suffix}")
+    language = st.selectbox("Язык", ["Русский", "Қазақша", "English"], index=["Русский", "Қазақша", "English"].index(selected_lesson["language"]) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"language_{form_key_suffix}")
 with form_right:
     subject = st.text_input("Предмет", value=selected_lesson["subject"] if selected_lesson else "", disabled=selected_lesson is not None, key=f"subject_{form_key_suffix}")
     group_name = st.text_input("Группа", value=selected_lesson["group_name"] if selected_lesson else "", disabled=selected_lesson is not None, key=f"group_{form_key_suffix}")
