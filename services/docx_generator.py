@@ -1,4 +1,5 @@
 import json
+from datetime import date, datetime
 from pathlib import Path
 from io import BytesIO
 
@@ -174,22 +175,99 @@ def _lesson_fields(content):
     )
 
 
+def _format_date_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%d.%m.%Y")
+    if not isinstance(value, str):
+        return str(value)
+
+    text = value.strip()
+    if not text:
+        return ""
+
+    for fmt in (
+        "%Y-%m-%d",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%d %H:%M:%S",
+        "%d.%m.%Y",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y.%m.%d",
+        "%Y/%m/%d",
+    ):
+        try:
+            return datetime.strptime(text, fmt).strftime("%d.%m.%Y")
+        except ValueError:
+            continue
+
+    try:
+        return datetime.fromisoformat(text).strftime("%d.%m.%Y")
+    except ValueError:
+        pass
+
+    return text
+
+
+def _field_value(key, value):
+    if value is None:
+        return ""
+    key_name = str(key).lower()
+    if key_name in {"date", "data", "lesson_date"}:
+        return _format_date_value(value)
+    return str(value)
+
+
 def _replace_placeholders(paragraph, fields):
-    text = paragraph.text
+    if not fields:
+        return
 
-    for key, value in fields.items():
-        text = text.replace(
-            "{" + key + "}",
-            "" if value is None else str(value),
-        )
+    applied = False
+    for run in list(paragraph.runs):
+        original_text = run.text or ""
+        replaced = original_text
+        for key, value in fields.items():
+            placeholder = "{" + str(key) + "}"
+            if placeholder in replaced:
+                replaced = replaced.replace(
+                    placeholder,
+                    _field_value(key, value),
+                )
+        if replaced != original_text:
+            run.text = replaced
+            set_run_font(run, size=Pt(11))
+            applied = True
 
-    if text != paragraph.text:
+    if not applied and paragraph.runs:
+        paragraph_text = "".join(run.text for run in paragraph.runs)
+        replaced = paragraph_text
+        for key, value in fields.items():
+            placeholder = "{" + str(key) + "}"
+            if placeholder in replaced:
+                replaced = replaced.replace(
+                    placeholder,
+                    _field_value(key, value),
+                )
+        if replaced != paragraph_text:
+            paragraph.text = replaced
+            for run in paragraph.runs:
+                set_run_font(run, size=Pt(11))
+
+    if not paragraph.runs and "{" in paragraph.text:
+        text = paragraph.text
+        for key, value in fields.items():
+            placeholder = "{" + str(key) + "}"
+            if placeholder in text:
+                text = text.replace(
+                    placeholder,
+                    _field_value(key, value),
+                )
         paragraph.text = text
-
-    if not paragraph.runs:
-        paragraph.add_run()
-    for run in paragraph.runs:
-        set_run_font(run, size=Pt(11))
+        if not paragraph.runs:
+            paragraph.add_run()
+        for run in paragraph.runs:
+            set_run_font(run, size=Pt(11))
 
 
 def _fill_document(doc, fields):
@@ -263,7 +341,8 @@ def _meta_template_fields(content):
         "homework": payload.get("homework", ""),
 
         # Дополнительные поля шаблона
-        "date": payload.get("date", ""),
+        "date": payload.get("date", payload.get("lesson_date", "")),
+        "data": payload.get("date", payload.get("lesson_date", "")),
         "evaluation_criteria": payload.get(
             "evaluation_criteria",
             "",
@@ -320,18 +399,21 @@ def build_doc(
         }
 
         _fill_document(doc, all_fields)
-        configure_document(doc)
-        normalize_document_fonts(doc)
+        # Preserve the original Word template structure and formatting; only
+        # replace the placeholder text already present in the template.
 
     else:
         doc = Document()
+        configure_document(doc)
 
         title_style = doc.styles["Normal"]
         title_style.font.name = "Times New Roman"
-        title_style.font.size = Pt(12)
+        title_style.font.size = Pt(11)
 
         doc.add_heading(title, 1)
-        doc.add_paragraph(content)
+        paragraph = doc.add_paragraph(content)
+        normalize_paragraph(paragraph, size=Pt(11))
+        normalize_document_fonts(doc)
 
     if schema and title != "План урока":
         doc.add_heading("Схема", 2)

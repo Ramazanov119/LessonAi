@@ -4,7 +4,13 @@ create table if not exists public.profiles (
     id uuid primary key references auth.users(id) on delete cascade,
     full_name text not null check (length(trim(full_name)) > 0),
     college text not null check (college in ('ETEC', 'META')),
-    created_at timestamptz not null default now()
+    created_at timestamptz not null default now(),
+    role text not null default 'teacher',
+    subscription_status text not null default 'pending',
+    subscription_plan text null default 'standard',
+    subscription_start timestamptz null,
+    subscription_end timestamptz null,
+    updated_at timestamptz null default now()
 );
 
 create table if not exists public.lessons (
@@ -49,12 +55,32 @@ security definer
 set search_path = public
 as $$
 begin
-    insert into public.profiles (id, full_name, college)
+    insert into public.profiles (
+        id,
+        full_name,
+        college,
+        role,
+        subscription_status,
+        subscription_plan,
+        updated_at
+    )
     values (
         new.id,
-        coalesce(new.raw_user_meta_data ->> 'full_name', ''),
-        coalesce(new.raw_user_meta_data ->> 'college', 'ETEC')
-    );
+        coalesce(new.raw_user_meta_data ->> 'full_name', new.email),
+        coalesce(new.raw_user_meta_data ->> 'college', 'ETEC'),
+        'teacher',
+        'pending',
+        'standard',
+        now()
+    )
+    on conflict (id) do update
+        set full_name = excluded.full_name,
+            college = excluded.college,
+            role = coalesce(public.profiles.role, 'teacher'),
+            subscription_status = coalesce(public.profiles.subscription_status, 'pending'),
+            subscription_plan = coalesce(public.profiles.subscription_plan, 'standard'),
+            updated_at = now();
+
     return new;
 end;
 $$;

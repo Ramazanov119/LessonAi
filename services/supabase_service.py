@@ -45,6 +45,50 @@ class SupabaseService:
     def __init__(self, client: Any):
         self.client = client
 
+    def _profile_from_user(self, user: Any, *, fallback_email: str = "") -> TeacherProfile:
+        metadata = getattr(user, "user_metadata", {}) or {}
+        full_name = (
+            metadata.get("full_name")
+            or metadata.get("fullName")
+            or metadata.get("name")
+            or ""
+        )
+        if not full_name:
+            email = getattr(user, "email", "") or fallback_email
+            if email:
+                full_name = email.split("@", 1)[0].strip() or "Преподаватель"
+            else:
+                full_name = "Преподаватель"
+
+        college = metadata.get("college") or "ETEC"
+        if college not in ALLOWED_COLLEGES:
+            college = "ETEC"
+
+        return TeacherProfile(full_name=full_name, college=college)
+
+    def _ensure_profile_exists(self, user: Any, *, fallback_email: str = "") -> dict[str, Any]:
+        if user is None or not getattr(user, "id", None):
+            return {}
+
+        profile = self._profile_from_user(user, fallback_email=fallback_email)
+        try:
+            existing = (
+                self.client.table("profiles")
+                .select("id")
+                .eq("id", user.id)
+                .limit(1)
+                .execute()
+            )
+        except Exception as error:
+            raise SupabaseServiceError(
+                "Не удалось проверить наличие профиля преподавателя."
+            ) from error
+
+        if existing.data:
+            return existing.data[0]
+
+        return self._upsert_profile(profile, user.id)
+
     def sign_up(self, email: str, password: str, profile: TeacherProfile):
         if profile.college not in ALLOWED_COLLEGES:
             raise AuthenticationError("Выберите колледж ETEC или META.")
@@ -62,14 +106,15 @@ class SupabaseService:
             ) from error
         if response.user is None:
             raise AuthenticationError("Supabase не вернул созданного пользователя.")
+
         if response.session is None:
-            # В Supabase Auth при включённой подтверждении email сессия может не создаваться
-            # сразу, хотя пользователь уже существует. В этом случае профиль будет создан
-            # триггером auth.users или может быть добавлен позже по обычному login flow.
-            # Не подменяем успешную регистрацию ложной ошибкой о профиле.
+            # Email confirmation может быть включён, и в этом случае пользователь уже создан,
+            # но authenticated session не передаётся на этом шаге. В таком случае мы не
+            # создаём профиль в обход существующего flow: профиль будет создан после входа.
             return response, None
+
         self._set_session(response.session)
-        self._upsert_profile(profile, response.user.id)
+        self._ensure_profile_exists(response.user, fallback_email=email)
         return response, response.session
 
     def sign_in(self, email: str, password: str):
@@ -84,6 +129,7 @@ class SupabaseService:
         if response.user is None or response.session is None:
             raise AuthenticationError("Supabase не вернул активную сессию.")
         self._set_session(response.session)
+        self._ensure_profile_exists(response.user, fallback_email=email)
         return response.session
 
     def restore_session(self, access_token: str, refresh_token: str):
@@ -93,6 +139,8 @@ class SupabaseService:
             raise AuthenticationError("Сессия истекла. Войдите снова.") from error
         if response.user is None or response.session is None:
             raise AuthenticationError("Сессия недействительна. Войдите снова.")
+        self._set_session(response.session)
+        self._ensure_profile_exists(response.user)
         return response.session
 
     def sign_out(self):
@@ -103,16 +151,39 @@ class SupabaseService:
 
     def get_profile(self) -> TeacherProfile:
         try:
-            response = self.client.table("profiles").select("id, full_name, college").single().execute()
+            response = (
+                self.client.table("profiles")
+                .select("id, full_name, college")
+                .single()
+                .execute()
+            )
         except Exception as error:
             raise SupabaseServiceError(
                 "Не удалось загрузить профиль преподавателя."
             ) from error
+
+        if not response.data:
+            try:
+                auth_user = self.client.auth.get_user().user
+            except Exception:
+                auth_user = None
+
+            if auth_user is not None:
+                self._ensure_profile_exists(auth_user)
+                response = (
+                    self.client.table("profiles")
+                    .select("id, full_name, college")
+                    .single()
+                    .execute()
+                )
+
         if not response.data:
             raise SupabaseServiceError("Профиль преподавателя не найден.")
+
         college = response.data.get("college")
         if college not in ALLOWED_COLLEGES:
             raise SupabaseServiceError("В профиле указано недопустимое значение колледжа.")
+
         return TeacherProfile(
             full_name=response.data.get("full_name", ""),
             college=college,
@@ -214,14 +285,23 @@ class SupabaseService:
         return response.data or []
 
     def _upsert_profile(self, profile: TeacherProfile, user_id: str):
+        payload = {
+            "id": user_id,
+            "full_name": profile.full_name.strip() or "Преподаватель",
+            "college": profile.college if profile.college in ALLOWED_COLLEGES else "ETEC",
+            "role": "teacher",
+            "subscription_status": "pending",
+            "subscription_plan": "standard",
+        }
         try:
-            self.client.table("profiles").upsert(
-                {
-                    "id": user_id,
-                    "full_name": profile.full_name,
-                    "college": profile.college,
-                }
-            ).execute()
+            response = (
+                self.client.table("profiles")
+                .upsert(payload, on_conflict="id")
+                .execute()
+            )
+            if not response.data:
+                raise SupabaseServiceError("Supabase не подтвердил сохранение профиля.")
+            return response.data[0] if isinstance(response.data, list) else response.data
         except Exception as error:
             raise SupabaseServiceError(
                 "Пользователь создан, но профиль сохранить не удалось."
