@@ -63,6 +63,10 @@ class SupabaseService:
         if response.user is None:
             raise AuthenticationError("Supabase не вернул созданного пользователя.")
         if response.session is None:
+            # В Supabase Auth при включённой подтверждении email сессия может не создаваться
+            # сразу, хотя пользователь уже существует. В этом случае профиль будет создан
+            # триггером auth.users или может быть добавлен позже по обычному login flow.
+            # Не подменяем успешную регистрацию ложной ошибкой о профиле.
             return response, None
         self._set_session(response.session)
         self._upsert_profile(profile, response.user.id)

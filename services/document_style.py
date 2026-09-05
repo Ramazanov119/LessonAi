@@ -6,9 +6,9 @@ from docx.shared import Cm, Pt
 
 
 BODY_FONT = "Times New Roman"
-BODY_SIZE = Pt(14)
-TABLE_SIZE = Pt(12)
-CAPTION_SIZE = Pt(12)
+BODY_SIZE = Pt(11)
+TABLE_SIZE = Pt(11)
+CAPTION_SIZE = Pt(11)
 FIRST_LINE_INDENT = Cm(1.25)
 
 
