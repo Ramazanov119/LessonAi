@@ -49,14 +49,38 @@ AI_CONFIG = AIConfig(
     openrouter_api_key=OPENROUTER_API_KEY,
 )
 
-LESSON_TYPES = [
-    "Жаңа сабақ",
-    "Аралас сабақ",
-    "Практикалық сабақ",
-    "Зертханалық сабақ",
-    "Қайталау сабағы",
-    "Бекіту сабағы",
-]
+LESSON_TYPES = {
+    "kk": [
+        "Жаңа сабақ",
+        "Аралас сабақ",
+        "Жалпылау және жүйелеу сабағы",
+        "Қайталау сабағы",
+        "Бекіту сабағы",
+        "Қорытынды сабақ",
+    ],
+    "ru": [
+        "Новый урок",
+        "Комбинированный урок",
+        "Урок обобщения и систематизации",
+        "Урок повторения",
+        "Урок закрепления",
+        "Итоговый урок",
+    ],
+    "en": [
+        "New lesson",
+        "Combined lesson",
+        "Generalization and systematization lesson",
+        "Review lesson",
+        "Consolidation lesson",
+        "Final lesson",
+    ],
+}
+
+LANGUAGE_CODES = {
+    "Русский": "ru",
+    "Қазақша": "kk",
+    "English": "en",
+}
 
 
 def _store_session(session):
@@ -97,6 +121,7 @@ def _render_auth_screen(service):
         college_logo_left, college_logo_right = st.columns(2)
         college_logo_left.image(get_college_config("ETEC")["logo"], width=120)
         college_logo_right.image(get_college_config("META")["logo"], width=120)
+        college_logo_right.image(get_college_config("ALT")["logo"], width=120)
         if st.button("Зарегистрироваться", key="registration_button", type="primary"):
             if not registration_name.strip():
                 st.error("Укажите ФИО преподавателя.")
@@ -522,13 +547,21 @@ with form_right:
 pck = st.selectbox("Председатель ПЦК", pck_chairs, index=pck_chairs.index(selected_chair) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"pck_{form_key_suffix}")
 
 if mode == "Поурочный план":
-    lesson_type_options = LESSON_TYPES.copy()
+    language_code = LANGUAGE_CODES[language]
+
+    lesson_type_options = LESSON_TYPES[language_code].copy()
+
     if selected_lesson and selected_lesson["lesson_type"] not in lesson_type_options:
         lesson_type_options.insert(0, selected_lesson["lesson_type"])
+
     lesson_type = st.selectbox(
         "Тип урока",
         lesson_type_options,
-        index=lesson_type_options.index(selected_lesson["lesson_type"]) if selected_lesson else 0,
+        index=(
+            lesson_type_options.index(selected_lesson["lesson_type"])
+            if selected_lesson and selected_lesson["lesson_type"] in lesson_type_options
+            else 0
+        ),
         disabled=selected_lesson is not None,
         key=f"lesson_type_{form_key_suffix}",
     )

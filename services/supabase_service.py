@@ -6,7 +6,7 @@ from models.generation import LessonMetadata, TeacherProfile
 
 DAILY_LESSON_LIMIT = 8
 FIXED_LESSON_DURATION = "70 минут"
-ALLOWED_COLLEGES = ("ETEC", "META")
+ALLOWED_COLLEGES = ("ETEC", "META", "ALT")
 MATERIAL_TYPES = ("lesson_plan", "lecture", "practice", "presentation")
 
 
@@ -91,7 +91,7 @@ class SupabaseService:
 
     def sign_up(self, email: str, password: str, profile: TeacherProfile):
         if profile.college not in ALLOWED_COLLEGES:
-            raise AuthenticationError("Выберите колледж ETEC или META.")
+            raise AuthenticationError("Выберите колледж")
         try:
             response = self.client.auth.sign_up(
                 {
@@ -102,7 +102,7 @@ class SupabaseService:
             )
         except Exception as error:
             raise AuthenticationError(
-                "Не удалось зарегистрироваться. Проверьте email и пароль."
+                f"Не удалось зарегистрироваться. Проверьте email и пароль. {error}"
             ) from error
         if response.user is None:
             raise AuthenticationError("Supabase не вернул созданного пользователя.")
@@ -288,7 +288,7 @@ class SupabaseService:
         payload = {
             "id": user_id,
             "full_name": profile.full_name.strip() or "Преподаватель",
-            "college": profile.college if profile.college in ALLOWED_COLLEGES else "ETEC",
+            "college": profile.college if profile.college in ALLOWED_COLLEGES else "college",
             "role": "teacher",
             "subscription_status": "pending",
             "subscription_plan": "standard",
