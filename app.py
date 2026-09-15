@@ -519,6 +519,7 @@ mode = st.radio(
 college_config = get_college_config(teacher_profile.college)
 selected_college = selected_lesson["college"] if selected_lesson else teacher_profile.college
 college_config = get_college_config(selected_college)
+lesson_duration = selected_lesson.get("duration") if selected_lesson else college_config.get("lesson_duration")
 selected_specialty = selected_lesson.get("speciality", "Не указано") if selected_lesson else None
 selected_chair = selected_lesson.get("chair", "Не указано") if selected_lesson else None
 specialties = college_config["specialties"] or ["Не указано"]
@@ -592,7 +593,14 @@ if mode == "Поурочный план":
                     _log_create_event(material_type, "AI generation started", subject, topic)
                     progress.write("🧠 Анализируем тему урока...")
                     lesson = create_lesson(
-                        subject, topic, language, specialty, pck, lesson_type, AI_CONFIG
+                        subject,
+                        topic,
+                        language,
+                        specialty,
+                        pck,
+                        lesson_type,
+                        lesson_duration,
+                        AI_CONFIG,
                     )
                     _log_create_event(material_type, "AI generation completed", subject, topic)
                     progress.write("🎯 Формируем цели обучения...")
@@ -610,7 +618,7 @@ if mode == "Поурочный план":
                                 topic=topic.strip(),
                                 group_name=group_name.strip(),
                                 course=course,
-                                duration=FIXED_LESSON_DURATION,
+                                duration=lesson_duration,
                                 lesson_date=lesson_date,
                                 language=language,
                                 lesson_type=lesson_type,
@@ -710,7 +718,7 @@ elif mode == "Лекция":
                                 topic=topic.strip(),
                                 group_name=group_name.strip(),
                                 course=course,
-                                duration=FIXED_LESSON_DURATION,
+                                duration=lesson_duration,
                                 lesson_date=lesson_date,
                                 language=language,
                                 lesson_type=lecture_type,
@@ -928,7 +936,7 @@ elif mode == "Практическое занятие":
                                 full_name=teacher_profile.full_name,
                                 college=teacher_profile.college,
                                 subject=subject.strip(), topic=topic.strip(), group_name=group_name.strip(),
-                                course=course, duration=FIXED_LESSON_DURATION, lesson_date=lesson_date,
+                                course=course, duration=lesson_duration, lesson_date=lesson_date,
                                 language=language, lesson_type="Практикалық сабақ", speciality=specialty, chair=pck,
                             )
                         )
