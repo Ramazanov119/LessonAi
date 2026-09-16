@@ -13,7 +13,7 @@ drop constraint if exists profiles_college_check;
 
 alter table public.profiles
 add constraint profiles_college_check
-check (college in ('ETEC', 'META', 'ALT', 'Q'));
+check (college in ('ETEC', 'META', 'ALT', 'Q', AKTKK));
 
 
 -- =========================================================

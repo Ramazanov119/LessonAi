@@ -6,7 +6,7 @@ from models.generation import LessonMetadata, TeacherProfile
 
 DAILY_LESSON_LIMIT = 8
 FIXED_LESSON_DURATION = "70 минут"
-ALLOWED_COLLEGES = ("ETEC", "META", "ALT")
+ALLOWED_COLLEGES = ("ETEC", "META", "ALT", "Q", "ATKK")
 MATERIAL_TYPES = ("lesson_plan", "lecture", "practice", "presentation")
 
 

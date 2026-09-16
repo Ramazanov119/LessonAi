@@ -3,7 +3,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.profiles (
     id uuid primary key references auth.users(id) on delete cascade,
     full_name text not null check (length(trim(full_name)) > 0),
-    college text not null check (college in ('ETEC', 'META')),
+    college text not null check (college in ('ETEC', 'META', BIGINT', 'ALT', 'Q', 'ATKK')),
     created_at timestamptz not null default now(),
     role text not null default 'teacher',
     subscription_status text not null default 'pending',

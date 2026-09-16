@@ -112,16 +112,41 @@ def _render_auth_screen(service):
             "Пароль", type="password", key="registration_password"
         )
         registration_name = st.text_input("ФИО преподавателя")
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stRadio"] > div {
+                flex-wrap: nowrap !important;
+                gap: 8px !important;
+            }
+            div[data-testid="stRadio"] label {
+                white-space: nowrap !important;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
         registration_college = st.radio(
             "Колледж",
             ALLOWED_COLLEGES,
             horizontal=True,
             key="registration_college",
         )
-        college_logo_left, college_logo_right = st.columns(2)
-        college_logo_left.image(get_college_config("ETEC")["logo"], width=120)
-        college_logo_right.image(get_college_config("META")["logo"], width=120)
-        college_logo_right.image(get_college_config("ALT")["logo"], width=120)
+        
+        logo_col_left, logo_col_center, logo_col_right = st.columns([1, 2, 1])
+        
+        with logo_col_center:
+            st.image(
+                get_college_config(registration_college)["logo"],
+                width=130,
+            )
+        
+        # college_logo_left, college_logo_right = st.columns(2)
+        # college_logo_left.image(get_college_config("ETEC")["logo"], width=120)
+        # college_logo_right.image(get_college_config("META")["logo"], width=120)
+        # college_logo_right.image(get_college_config("ALT")["logo"], width=100)
+        # college_logo_right.image(get_college_config("Q")["logo"], width=100)
+        # college_logo_left.image(get_college_config("ATKK")["logo"], width=90)
         if st.button("Зарегистрироваться", key="registration_button", type="primary"):
             if not registration_name.strip():
                 st.error("Укажите ФИО преподавателя.")
@@ -178,24 +203,73 @@ def _log_create_failure(material_type, stage, subject, topic, error):
         type(error).__name__,
     )
 
-def _render_brand_header(*, daily_count=None):
+def _render_brand_header(*, daily_count=None, college=None):
     quota_class = ""
+
     if daily_count == DAILY_LESSON_LIMIT:
         quota_class = "danger"
     elif daily_count is not None and daily_count >= 6:
         quota_class = "warning"
+
     quota = ""
+
     if daily_count is not None:
         quota = (
             f"<span class='ai-edu-quota {quota_class}'>Сегодня "
             f"<strong>{daily_count}/{DAILY_LESSON_LIMIT}</strong></span>"
         )
+
+    logo = None
+
+    if college:
+        logo = get_college_config(college).get("logo")
+
+    brand_left, brand_right = st.columns([5, 1])
+
+    with brand_left:
+        logo_col, wordmark_col = st.columns([1, 5])
+
+        with logo_col:
+            if logo:
+                st.image(logo, width=55)
+
+        with wordmark_col:
+            st.markdown(
+                "<div class='ai-edu-wordmark'>"
+                "<span>AI</span> EDU</div>",
+                unsafe_allow_html=True,
+            )
+
+    with brand_right:
+        if quota:
+            st.markdown(
+                f"<div style='text-align:right; padding-top:8px;'>{quota}</div>",
+                unsafe_allow_html=True,
+            )
+
     st.markdown(
-        f"<div class='ai-edu-brand'><div class='ai-edu-wordmark'>"
-        f"<span>AI</span> EDU</div>{quota}</div>"
         "<div class='ai-edu-brand-line'></div>",
         unsafe_allow_html=True,
     )
+
+# def _render_brand_header(*, daily_count=None,college=None):
+#     quota_class = ""
+#     if daily_count == DAILY_LESSON_LIMIT:
+#         quota_class = "danger"
+#     elif daily_count is not None and daily_count >= 6:
+#         quota_class = "warning"
+#     quota = ""
+#     if daily_count is not None:
+#         quota = (
+#             f"<span class='ai-edu-quota {quota_class}'>Сегодня "
+#             f"<strong>{daily_count}/{DAILY_LESSON_LIMIT}</strong></span>"
+#         )
+#     st.markdown(
+#         f"<div class='ai-edu-brand'><div class='ai-edu-wordmark'>"
+#         f"<span>AI</span> EDU</div>{quota}</div>"
+#         "<div class='ai-edu-brand-line'></div>",
+#         unsafe_allow_html=True,
+#     )
 
 
 MATERIAL_LABELS = {
@@ -455,7 +529,7 @@ except SupabaseServiceError as error:
     st.error(str(error))
     st.stop()
 
-_render_brand_header(daily_count=daily_count)
+_render_brand_header(daily_count=daily_count, college=teacher_profile.college)
 header_name, header_college, header_logout = st.columns([2, 2, 1])
 header_name.caption(f"Преподаватель · {teacher_profile.full_name}")
 header_college.caption(f"Колледж · {teacher_profile.college}")
