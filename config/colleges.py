@@ -62,7 +62,28 @@ COLLEGES = {
         ],
         "pck_chairs": ["Не указано"],
         "lesson_duration": 90
+    },
+    "Q": {
+        "logo": PROJECT_ROOT / "assets" / "logos" / "q.png",
+        "template": PROJECT_ROOT / "template_q.docx",
+        "specialties": [
+            "04210100-Құқықтану/Правоведение",
+            "06130100-Бағдарламалық қамтамасыз ету(түрлері бойынша)/Программное обеспечение(по видам)",
+            "04110100-Есеп және аудит/Учет и аудит",
+            "01140100-Бастауыш білім беру педагогикасы мен әдістемесі/Педагогика и методика начального обучения"
+        ],
+        "pck_chairs": ["Қалдыбекова Ж.М.", "Сагындыкова Г.У."],
+        "lesson_duration": 90
+    },
+    "ATKK": {
+        "logo": PROJECT_ROOT / "assets" / "logos" / "atkk.png",
+        "template": PROJECT_ROOT / "template_atkk.docx",
+        "specialties": [
+            
+        ]
     }
+    
+    
 }
 
 
