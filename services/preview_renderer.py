@@ -6,6 +6,7 @@ from contextlib import contextmanager
 import streamlit as st
 
 from config.colleges import get_college_config
+from services.lecture_localization import lecture_labels
 
 @contextmanager
 def generation_status(title, steps):
@@ -84,44 +85,47 @@ def _list(items):
     return "<ul>" + "".join(f"<li>{_safe_text(item)}</li>" for item in items) + "</ul>"
 
 
-def _lecture_body(data):
+def _lecture_body(data, language="Русский"):
+    labels = lecture_labels(language)
     blocks = []
     if data.get("relevance"):
-        blocks += ["<h1>1. Актуальность</h1>", _paragraph(data["relevance"])]
+        blocks += [f"<h1>1. {labels['relevance']}</h1>", _paragraph(data["relevance"])]
     if data.get("learning_goals"):
-        blocks += ["<h1>2. Цели обучения</h1>", _list(data["learning_goals"])]
+        blocks += [f"<h1>2. {labels['learning_goals']}</h1>", _list(data["learning_goals"])]
     if data.get("key_terms"):
-        blocks.append("<h1>3. Ключевые понятия</h1>")
+        blocks.append(f"<h1>3. {labels['key_terms']}</h1>")
         for item in data["key_terms"]:
-            blocks.append(f"<h2>{_safe_text(item.get('term', 'Понятие'))}</h2>")
+            blocks.append(f"<h2>{_safe_text(item.get('term', labels['term']))}</h2>")
             blocks.append(_paragraph(item.get("definition", "")))
     if data.get("main_material"):
-        blocks.append("<h1>4. Основной теоретический материал</h1>")
+        blocks.append(f"<h1>4. {labels['main_material']}</h1>")
         for item in data["main_material"]:
-            blocks.append(f"<h2>{_safe_text(item.get('title', 'Материал'))}</h2>")
+            blocks.append(f"<h2>{_safe_text(item.get('title', labels['material']))}</h2>")
             blocks.append(_paragraph(item.get("content", "")))
             if item.get("examples"):
-                blocks.append("<h3>Примеры</h3>")
+                blocks.append(f"<h3>{labels['examples']}</h3>")
                 blocks.append(_list(item["examples"]))
     if data.get("practice_examples"):
-        blocks += ["<h1>5. Практические примеры</h1>", _list(data["practice_examples"])]
+        blocks += [f"<h1>5. {labels['practice_examples']}</h1>", _list(data["practice_examples"])]
     case = data.get("case_study") or {}
     if case:
-        blocks.append("<h1>6. Профессиональная ситуация / кейс</h1>")
-        for title, key in (("Сценарий", "scenario"), ("Анализ", "analysis"), ("Решение", "solution")):
+        blocks.append(f"<h1>6. {labels['case_study']}</h1>")
+        for title, key in ((labels["scenario"], "scenario"), (labels["analysis"], "analysis"), (labels["solution"], "solution")):
             if case.get(key):
                 blocks.append(f"<h2>{title}</h2><div class='ai-edu-info'>{_paragraph(case[key])}</div>")
     if data.get("common_errors"):
-        blocks.append("<h1>7. Типичные ошибки</h1>")
+        blocks.append(f"<h1>7. {labels['common_errors']}</h1>")
         for item in data["common_errors"]:
-            blocks.append(f"<h2>{_safe_text(item.get('error', 'Ошибка'))}</h2>")
-            blocks.append(_paragraph(item.get("fix", item.get("why", ""))))
+            for key in ("error", "why", "fix"):
+                if item.get(key):
+                    blocks.append(f"<h2>{labels[key]}</h2>")
+                    blocks.append(_paragraph(item[key]))
     if data.get("summary"):
-        blocks += ["<h1>8. Резюме</h1>", _list(data["summary"])]
+        blocks += [f"<h1>8. {labels['summary']}</h1>", _list(data["summary"])]
     if data.get("review_questions"):
-        blocks += ["<h1>9. Вопросы для закрепления</h1>", "<ol>" + "".join(f"<li>{_safe_text(item)}</li>" for item in data["review_questions"]) + "</ol>"]
+        blocks += [f"<h1>9. {labels['review_questions']}</h1>", "<ol>" + "".join(f"<li>{_safe_text(item)}</li>" for item in data["review_questions"]) + "</ol>"]
     if data.get("preparation_for_practice"):
-        blocks += ["<h1>10. Подготовка к практическому занятию</h1>", _paragraph(data["preparation_for_practice"])]
+        blocks += [f"<h1>10. {labels['preparation_for_practice']}</h1>", _paragraph(data["preparation_for_practice"])]
     if data.get("text"):
         blocks.append(_paragraph(data["text"]))
     return "".join(blocks)
@@ -192,28 +196,33 @@ def render_document_preview(content, document_type, metadata, *, schema=None, vi
     """Render a reusable document-like preview for any generated material."""
     _styles()
     content = _parse_content(content)
+    labels = lecture_labels(metadata.get("language"))
+    is_lecture = document_type == "Лекция"
+    teacher_label = labels["teacher"] if is_lecture else "Преподаватель"
+    date_label = labels["date"] if is_lecture else "Дата"
+    cover_type = labels["lecture"] if is_lecture else document_type
     logo = _logo_data(metadata.get("college"))
-    logo_html = f"<img class='ai-edu-logo' src='{logo}' alt='Логотип колледжа'>" if logo else ""
+    logo_html = f"<img class='ai-edu-logo' src='{logo}' alt='{labels['logo']}'>" if logo else ""
     if document_type == "Лекция":
-        body = _lecture_body(content)
+        body = _lecture_body(content, metadata.get("language"))
     elif document_type == "Практическое занятие":
         body = _practice_body(content)
     else:
         body = _generic_body(content, document_type)
     if schema:
-        body += f"<h2>Схема</h2>{_paragraph(schema)}"
+        body += f"<h2>{labels['schema'] if is_lecture else 'Схема'}</h2>{_paragraph(schema)}"
     if visual:
-        body += f"<h2>Иллюстрация</h2>{_paragraph(visual)}"
+        body += f"<h2>{labels['visual'] if is_lecture else 'Иллюстрация'}</h2>{_paragraph(visual)}"
     html_content = f"""
     <div class='ai-edu-preview-wrap'>
       <div class='ai-edu-preview-label'>Предпросмотр документа</div>
       <div class='ai-edu-document'>
         <section class='ai-edu-page ai-edu-cover'>
           {logo_html}
-          <p class='ai-edu-meta'><strong>Преподаватель:</strong> {_safe_text(metadata.get('teacher'))}</p>
-          <p class='ai-edu-meta'><strong>Дата:</strong> {_safe_text(metadata.get('date'))}</p>
+          <p class='ai-edu-meta'><strong>{teacher_label}:</strong> {_safe_text(metadata.get('teacher'))}</p>
+          <p class='ai-edu-meta'><strong>{date_label}:</strong> {_safe_text(metadata.get('date'))}</p>
           <div class='ai-edu-cover-title'>{_safe_text(metadata.get('subject'))}</div>
-          <div class='ai-edu-cover-type'>{_safe_text(document_type).upper()}</div>
+          <div class='ai-edu-cover-type'>{_safe_text(cover_type).upper()}</div>
           <div class='ai-edu-cover-topic'>{_safe_text(metadata.get('topic'))}</div>
         </section>
         <section class='ai-edu-page ai-edu-content'>{body}</section>

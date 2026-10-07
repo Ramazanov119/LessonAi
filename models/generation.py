@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -10,28 +9,11 @@ class AIConfig:
     openai_url: str = "https://api.openai.com/v1/chat/completions"
     openrouter_url: str = "https://openrouter.ai/api/v1/chat/completions"
     text_model: str = "gpt-4.1"
-    schema_model: str = "deepseek/deepseek-chat-v3"
+    presentation_provider: str = "openrouter"
+    presentation_model: str = "google/gemini-2.5-flash"
+    gemini_api_key: str = ""
+    gemini_url: str = "https://generativelanguage.googleapis.com/v1beta"
     timeout_seconds: float = 60.0
-
-
-@dataclass(frozen=True)
-class LessonRequest:
-    subject: str
-    topic: str
-    language: str
-    specialty: str
-    pck: str
-    lesson_type: str
-
-
-@dataclass(frozen=True)
-class ControlRequest:
-    subject: str
-    topic: str
-    language: str
-    specialty: str
-    difficulty: str
-    count: int
 
 
 @dataclass(frozen=True)
@@ -54,13 +36,6 @@ class LessonMetadata:
     lesson_type: str
     speciality: str
     chair: str
-
-
-@dataclass(frozen=True)
-class GenerationResult:
-    content: str
-    schema: Optional[str] = None
-    visual: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -107,6 +82,14 @@ class NBDeck:
     @classmethod
     def from_dict(cls, data: dict) -> "NBDeck":
         """Build an NBDeck from the JSON structure returned by the AI."""
+        def comparison(entry):
+            if isinstance(entry, dict):
+                return str(entry.get("label", "")), tuple(
+                    str(item) for item in entry.get("items", [])
+                )
+            label, values = entry
+            return str(label), tuple(str(item) for item in values)
+
         slides = tuple(
             NBSlide(
                 kind=str(slide.get("kind", "concept")),
@@ -130,8 +113,7 @@ class NBDeck:
                     for stage, description in slide.get("timeline", [])
                 ),
                 comparisons=tuple(
-                    (str(label), tuple(str(item) for item in values))
-                    for label, values in slide.get("comparisons", [])
+                    comparison(entry) for entry in slide.get("comparisons", [])
                 ),
                 statistics=tuple(
                     (str(value), str(label))

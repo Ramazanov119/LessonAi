@@ -1767,6 +1767,14 @@ def render_nb_deck(deck: NBDeck) -> BytesIO:
                 slide_index=idx,
                 total_slides=total_slides,
             )
+        elif slide_data.kind == "cases":
+            _render_cases_slide(slide, deck, slide_data, college_color)
+            _render_footer(
+                slide,
+                text=f"{deck.subject} • {deck.college}" if deck.subject else deck.college,
+                slide_index=idx,
+                total_slides=total_slides,
+            )
         else:
             _render_fallback_slide(slide, deck, slide_data, college_color)
             _render_footer(

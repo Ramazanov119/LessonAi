@@ -6,20 +6,24 @@ import streamlit as st
 from datetime import date
 
 from config.colleges import get_college_config
-from models import AIConfig, LessonMetadata, PresentationSlide, TeacherProfile
+from models import AIConfig, LessonMetadata, NBDeck, PresentationSlide, TeacherProfile
 from services.ai import (
     AIServiceError,
     create_control,
     create_lesson,
     create_lecture,
     create_practice,
-    create_schema,
-    create_visual,
     rework_lecture,
     rework_practice,
 )
 from services.docx_generator import build_doc, build_lecture_docx, build_practice_docx
-from services.presentation_generator import build_presentation
+from services.presentation_generator import build_presentation, render_nb_deck
+from services.presentation_service import (
+    PresentationRequest,
+    PresentationService,
+    PresentationServiceError,
+)
+from services.presenton_service import PresentonClient
 from services.preview_renderer import generation_status, render_document_preview
 from services.supabase_service import (
     ALLOWED_COLLEGES,
@@ -47,6 +51,19 @@ SUPABASE_ANON_KEY = st.secrets.get("SUPABASE_ANON_KEY", "")
 AI_CONFIG = AIConfig(
     openai_api_key=OPENAI_API_KEY,
     openrouter_api_key=OPENROUTER_API_KEY,
+    gemini_api_key=st.secrets.get("GEMINI_API_KEY", ""),
+    presentation_provider=st.secrets.get("PRESENTATION_PROVIDER", "openrouter"),
+    presentation_model=st.secrets.get("PRESENTATION_MODEL", "google/gemini-2.5-flash"),
+)
+PRESENTATION_ENGINE = st.secrets.get("PRESENTATION_ENGINE", "native")
+PRESENTATION_SERVICE = PresentationService(
+    PRESENTATION_ENGINE,
+    AI_CONFIG,
+    PresentonClient(
+        st.secrets.get("PRESENTON_BASE_URL", ""),
+        st.secrets.get("PRESENTON_API_KEY", ""),
+        st.secrets.get("PRESENTON_TIMEOUT_SECONDS", 180),
+    ),
 )
 
 LESSON_TYPES = {
@@ -168,8 +185,9 @@ def _render_auth_screen(service):
                     st.error(str(error))
 
 
-def _preview_metadata(teacher_profile, subject, topic, lesson_date):
+def _preview_metadata(teacher_profile, subject, topic, lesson_date, language="Русский"):
     return {
+        "language": language,
         "college": teacher_profile.college,
         "teacher": teacher_profile.full_name,
         "subject": subject.strip(),
@@ -252,26 +270,6 @@ def _render_brand_header(*, daily_count=None, college=None):
         unsafe_allow_html=True,
     )
 
-# def _render_brand_header(*, daily_count=None,college=None):
-#     quota_class = ""
-#     if daily_count == DAILY_LESSON_LIMIT:
-#         quota_class = "danger"
-#     elif daily_count is not None and daily_count >= 6:
-#         quota_class = "warning"
-#     quota = ""
-#     if daily_count is not None:
-#         quota = (
-#             f"<span class='ai-edu-quota {quota_class}'>Сегодня "
-#             f"<strong>{daily_count}/{DAILY_LESSON_LIMIT}</strong></span>"
-#         )
-#     st.markdown(
-#         f"<div class='ai-edu-brand'><div class='ai-edu-wordmark'>"
-#         f"<span>AI</span> EDU</div>{quota}</div>"
-#         "<div class='ai-edu-brand-line'></div>",
-#         unsafe_allow_html=True,
-#     )
-
-
 MATERIAL_LABELS = {
     "lesson_plan": ("📋", "Поурочный план"),
     "lecture": ("📚", "Лекция"),
@@ -329,7 +327,8 @@ def _material_download(lesson, material):
     if material_type == "lecture":
         return "Скачать DOCX", build_lecture_docx(
             content,
-            title=f"Лекция: {lesson['topic']}",
+            title=lesson["topic"],
+            language=lesson["language"],
             college=lesson["college"],
             subject=lesson["subject"],
             teacher=lesson.get("full_name", ""),
@@ -342,6 +341,14 @@ def _material_download(lesson, material):
             payload = json.loads(content)
         except (TypeError, json.JSONDecodeError):
             payload = {"content": content}
+        if payload.get("engine") == "presenton":
+            return (
+                "Скачать PPTX",
+                PRESENTATION_SERVICE.download_saved(payload),
+                "presentation.pptx",
+            )
+        if "slides" in payload:
+            return "Скачать PPTX", render_nb_deck(NBDeck.from_dict(payload)), "presentation.pptx"
         slides = [
             PresentationSlide("Схема", str(payload.get("schema", ""))),
             PresentationSlide("Иллюстрация", str(payload.get("visual", ""))),
@@ -454,13 +461,18 @@ def _render_lesson_workspace(service, lessons):
                     if st.button("Открыть", key=f"view_{selected['id']}_{material_type}"):
                         st.session_state["opened_material_id"] = material["id"]
                 with download_column:
-                    download_label, document, filename = _material_download(selected, material)
-                    st.download_button(
-                        download_label,
-                        document,
-                        filename,
-                        key=f"download_{selected['id']}_{material_type}",
-                    )
+                    try:
+                        download_label, document, filename = _material_download(
+                            selected, material
+                        )
+                        st.download_button(
+                            download_label,
+                            document,
+                            filename,
+                            key=f"download_{selected['id']}_{material_type}",
+                        )
+                    except PresentationServiceError as error:
+                        st.error(str(error))
                 with rework_column:
                     st.button(
                         "Переработать",
@@ -476,6 +488,7 @@ def _render_lesson_workspace(service, lessons):
                 opened_material["content"],
                 MATERIAL_MODE_LABELS[opened_material["material_type"]],
                 {
+                    "language": selected["language"],
                     "college": selected["college"],
                     "teacher": selected.get("full_name", ""),
                     "subject": selected["subject"],
@@ -733,7 +746,7 @@ if mode == "Поурочный план":
                 render_document_preview(
                     lesson,
                     "План урока",
-                    _preview_metadata(teacher_profile, subject, topic, lesson_date),
+                    _preview_metadata(teacher_profile, subject, topic, lesson_date, language),
                 )
                 st.download_button("Скачать DOCX", doc, "lesson.docx", type="secondary")
                 _log_create_event(material_type, "completed", subject, topic)
@@ -817,7 +830,8 @@ elif mode == "Лекция":
                     progress.write("📄 Формируем учебный документ...")
                     st.session_state["lecture_doc"] = build_lecture_docx(
                         lecture,
-                        title=f"Лекция: {topic.strip()}",
+                        title=topic.strip(),
+                        language=language,
                         college=teacher_profile.college,
                         subject=subject.strip(),
                         teacher=teacher_profile.full_name,
@@ -839,7 +853,7 @@ elif mode == "Лекция":
             render_document_preview(
                 st.session_state["lecture_text"],
                 "Лекция",
-                _preview_metadata(teacher_profile, subject, topic, lesson_date),
+                _preview_metadata(teacher_profile, subject, topic, lesson_date, language),
             )
             st.download_button(
                 "Скачать DOCX",
@@ -886,6 +900,7 @@ elif mode == "Лекция":
                         st.session_state["lecture_text"],
                         rework_mode,
                         AI_CONFIG,
+                        language=language,
                     )
                     _log_create_event(material_type, "AI generation completed", subject, topic)
                     progress.write("✍️ Улучшаем содержание и примеры...")
@@ -904,7 +919,8 @@ elif mode == "Лекция":
                     progress.write("📄 Обновляем учебный документ...")
                     st.session_state["lecture_doc"] = build_lecture_docx(
                         updated_lecture,
-                        title=f"Лекция: {topic.strip()}",
+                        title=topic.strip(),
+                        language=language,
                         college=teacher_profile.college,
                         subject=subject.strip(),
                         teacher=teacher_profile.full_name,
@@ -942,7 +958,7 @@ elif mode == "Практическое занятие":
         render_document_preview(
             practice_material,
             "Практическое занятие",
-            _preview_metadata(teacher_profile, subject, topic, lesson_date),
+            _preview_metadata(teacher_profile, subject, topic, lesson_date, language),
         )
         st.download_button("Скачать DOCX", practice_document, "practice.docx", type="secondary")
         rework_mode = st.selectbox(
@@ -1040,21 +1056,41 @@ else:
             try:
                 with generation_status("Создаём презентацию", ["✓ Материал готов"]) as progress:
                     _log_create_event(material_type, "AI generation started", subject, topic)
-                    schema = create_schema(topic, AI_CONFIG)
-                    visual = create_visual(topic, AI_CONFIG)
-                    content = {"schema": schema, "visual": visual}
+                    materials = SUPABASE_SERVICE.list_materials(selected_lesson["id"])
+                    material_content = {
+                        item["material_type"]: _material_content(item["content"])
+                        for item in materials
+                    }
+                    artifact = PRESENTATION_SERVICE.generate(
+                        PresentationRequest(
+                            subject=subject.strip(),
+                            topic=topic.strip(),
+                            specialty=specialty,
+                            language=language,
+                            lesson_type=selected_lesson.get("lesson_type", ""),
+                            lesson_duration=str(lesson_duration),
+                            teacher=teacher_name,
+                            college=selected_college,
+                            group=group_name.strip(),
+                            lesson_plan=material_content.get("lesson_plan", ""),
+                            lecture=material_content.get("lecture", ""),
+                            practice=material_content.get("practice", ""),
+                            lesson_date=lesson_date.strftime("%d.%m.%Y"),
+                        )
+                    )
+                    content = artifact.stored_content
                     _log_create_event(material_type, "AI generation completed", subject, topic)
                     stage = "material save"
                     _log_create_event(material_type, "material save started", subject, topic)
                     SUPABASE_SERVICE.upsert_material(selected_lesson["id"], material_type, _material_content(content))
                     _log_create_event(material_type, "material saved", subject, topic)
                     stage = "document generation"
-                    document = build_presentation(
-                        topic,
-                        [PresentationSlide("Схема", schema), PresentationSlide("Иллюстрация", visual)],
-                    )
+                    document = artifact.content
                 st.download_button("Скачать PPTX", document, "presentation.pptx", type="secondary")
                 _log_create_event(material_type, "completed", subject, topic)
+            except (AIServiceError, PresentationServiceError) as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
+                st.error(str(error))
             except Exception as error:
                 _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()

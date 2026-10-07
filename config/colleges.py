@@ -89,10 +89,7 @@ COLLEGES = {
         "pck_chairs": ["Не указано"],
         "lesson_duration": 70
     }
-    
-    
 }
-
 
 def get_college_config(college: str) -> dict:
     """Return the configured assets and reference data for a college."""

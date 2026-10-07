@@ -1,6 +1,9 @@
+import json
+import re
+
 import requests
 
-from models.generation import AIConfig
+from models.generation import AIConfig, NBDeck
 
 
 class AIServiceError(RuntimeError):
@@ -76,23 +79,144 @@ def openai_generate(prompt, system, config):
     return _content_from_response(data, "OpenAI")
 
 
-def openrouter_generate(prompt, config):
-    headers = {
-        "Authorization": f"Bearer {config.openrouter_api_key}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": config.schema_model,
-        "messages": [{"role": "user", "content": prompt}],
-    }
-    data = _request_json(
-        config.openrouter_url,
-        headers,
-        payload,
-        "OpenRouter",
-        config.timeout_seconds,
+PRESENTATION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "subject": {"type": "string"},
+        "teacher": {"type": "string"},
+        "college": {"type": "string"},
+        "group": {"type": "string"},
+        "date": {"type": "string"},
+        "slides": {
+            "type": "array",
+            "minItems": 7,
+            "maxItems": 12,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "kind": {"type": "string", "enum": ["title", "overview", "concept", "definitions", "process", "compare", "stats", "cases"]},
+                    "title": {"type": "string"},
+                    "subtitle": {"type": "string"},
+                    "items": {"type": "array", "items": {"type": "string"}},
+                    "sections": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2}},
+                    "terms": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2}},
+                    "steps": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2}},
+                    "timeline": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2}},
+                    "comparisons": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "label": {"type": "string"},
+                                "items": {"type": "array", "items": {"type": "string"}},
+                            },
+                            "required": ["label", "items"],
+                            "additionalProperties": False,
+                        },
+                    },
+                    "statistics": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2}},
+                    "highlight": {"type": "string"},
+                    "code": {"type": "string"},
+                },
+                "required": ["kind", "title", "subtitle", "items", "sections", "terms", "steps", "timeline", "comparisons", "statistics", "highlight", "code"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["title", "subject", "teacher", "college", "group", "date", "slides"],
+    "additionalProperties": False,
+}
+
+
+def _parse_json_content(content, provider):
+    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip(), flags=re.I)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError as error:
+        raise AIServiceError(f"{provider}: модель вернула некорректную структуру презентации.") from error
+
+
+def _presentation_prompt(metadata, source_content):
+    return f"""Создай содержательную учебную презентацию для колледжа.
+Язык презентации: {metadata['language']}.
+Предмет: {metadata['subject']}
+Тема: {metadata['topic']}
+Преподаватель: {metadata['teacher']}
+Колледж: {metadata['college']}
+Группа: {metadata['group']}
+Дата: {metadata['date']}
+
+Используй 7–12 слайдов. Первый слайд имеет kind=title. Затем выбери подходящие
+композиции; не добавляй вымышленные факты и числовую статистику. Текст должен
+быть кратким, пригодным для показа на экране, без markdown. Верни только JSON.
+
+Исходный учебный материал:
+{source_content[:24000]}
+"""
+
+
+def create_presentation_deck(metadata, source_content, config):
+    """Generate a validated deck model through a swappable AI provider."""
+    prompt = _presentation_prompt(metadata, source_content)
+    provider = config.presentation_provider.strip().lower()
+
+    if provider == "gemini":
+        if not config.gemini_api_key:
+            raise AIServiceError("Gemini: добавьте GEMINI_API_KEY в Streamlit secrets.")
+        model = config.presentation_model.removeprefix("google/")
+        data = _request_json(
+            f"{config.gemini_url}/models/{model}:generateContent?key={config.gemini_api_key}",
+            {"Content-Type": "application/json"},
+            {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.35,
+                    "responseMimeType": "application/json",
+                    "responseJsonSchema": PRESENTATION_SCHEMA,
+                },
+            },
+            "Gemini",
+            config.timeout_seconds,
+        )
+        try:
+            content = data["candidates"][0]["content"]["parts"][0]["text"]
+        except (KeyError, IndexError, TypeError) as error:
+            raise AIServiceError("Gemini: в ответе отсутствует презентация.") from error
+    elif provider == "openrouter":
+        payload = {
+            "model": config.presentation_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.35,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "lesson_presentation", "strict": True, "schema": PRESENTATION_SCHEMA},
+            },
+        }
+        data = _request_json(
+            config.openrouter_url,
+            {"Authorization": f"Bearer {config.openrouter_api_key}", "Content-Type": "application/json"},
+            payload,
+            "OpenRouter",
+            config.timeout_seconds,
+        )
+        content = _content_from_response(data, "OpenRouter")
+    else:
+        raise AIServiceError(f"Неизвестный провайдер презентаций: {provider}")
+
+    generated = _parse_json_content(content, provider)
+    generated.update(
+        title=metadata["topic"],
+        subject=metadata["subject"],
+        teacher=metadata["teacher"],
+        college=metadata["college"],
+        group=metadata["group"],
+        date=metadata["date"],
     )
-    return _content_from_response(data, "OpenRouter")
+    deck = NBDeck.from_dict(generated)
+    if len(deck.slides) < 2 or deck.slides[0].kind != "title":
+        raise AIServiceError("Модель вернула неполную презентацию.")
+    return deck
 
 
 def create_lesson(
@@ -463,7 +587,6 @@ interdisciplinary_connections должны быть заполнены коро�
 11. Подготовка к практическому занятию
 """
     return openai_generate(prompt, system, config)
-
 def create_lecture(subject, topic, language, specialty, pck, lesson_type, config):
     system = """
 Ты методист колледжа Казахстана. Пиши академичный и профессиональный материал
@@ -550,7 +673,7 @@ def create_lecture(subject, topic, language, specialty, pck, lesson_type, config
     return openai_generate(prompt, system, config)
 
 
-def rework_lecture(lecture_text, style, config):
+def rework_lecture(lecture_text, style, config, *, language="Русский"):
     system = f"""
 Ты методист колледжа. Перерабатываешь существующую лекцию, сохраняя её тему и смысл, но усиливая качество.
 
@@ -558,6 +681,7 @@ def rework_lecture(lecture_text, style, config):
 Нельзя писать текст вне JSON.
 
 Настройка переработки: {style}
+Язык лекции: {language}. Весь текст, включая названия разделов и примеры, должен быть на этом языке.
 
 Правила:
 - сохраняй тему и учебный контекст;
@@ -714,37 +838,3 @@ def rework_practice(practice_text, style, *, lesson_plan=None, lecture=None, con
 {lecture or "Не создана"}
 """
     return openai_generate(prompt, system, config)
-
-
-def create_schema(topic, config):
-    prompt = f"""
-
-Создай Mermaid диаграмму.
-
-Тема:
-
-{topic}
-
-Верни только Mermaid.
-
-"""
-    return openrouter_generate(prompt, config)
-
-
-def create_visual(topic, config):
-    prompt = f"""
-
-Создай описание рисунка.
-
-Тема:
-
-{topic}
-
-Верни:
-
-тип рисунка
-
-что должно быть изображено
-
-"""
-    return openrouter_generate(prompt, config)

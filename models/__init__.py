@@ -1,19 +1,17 @@
 from .generation import (
     AIConfig,
-    ControlRequest,
-    GenerationResult,
     LessonMetadata,
-    LessonRequest,
+    NBDeck,
+    NBSlide,
     PresentationSlide,
     TeacherProfile,
 )
 
 __all__ = [
     "AIConfig",
-    "ControlRequest",
-    "GenerationResult",
     "LessonMetadata",
-    "LessonRequest",
+    "NBDeck",
+    "NBSlide",
     "PresentationSlide",
     "TeacherProfile",
 ]

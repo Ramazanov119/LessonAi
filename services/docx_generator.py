@@ -8,6 +8,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Cm, Inches, Pt
 
 from config.colleges import get_college_config
+from services.lecture_localization import lecture_labels
 from services.document_style import (
     add_page_number,
     configure_document,
@@ -36,6 +37,7 @@ def _get_logo_path(college):
 def _add_title_page(
     doc,
     *,
+    language="Русский",
     college=None,
     subject=None,
     title=None,
@@ -44,6 +46,7 @@ def _add_title_page(
     course=None,
     lesson_date=None,
 ):
+    labels = lecture_labels(language)
     logo_path = _get_logo_path(college)
 
     title_para = doc.add_paragraph()
@@ -60,9 +63,9 @@ def _add_title_page(
             pass
 
     meta = [
-        ("Преподаватель", teacher or ""),
+        (labels["teacher"], teacher or ""),
         (
-            "Дата",
+            labels["date"],
             lesson_date.strftime("%d.%m.%Y")
             if lesson_date
             else "",
@@ -84,7 +87,7 @@ def _add_title_page(
         value_run = line.add_run(str(value))
         set_run_font(value_run)
 
-    subject_text = str(subject or "Предмет")
+    subject_text = str(subject or labels["subject"])
 
     subject_para = doc.add_paragraph()
     subject_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -98,10 +101,10 @@ def _add_title_page(
     type_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
     type_para.paragraph_format.space_after = Pt(8)
 
-    type_run = type_para.add_run("ЛЕКЦИЯ")
+    type_run = type_para.add_run(labels["lecture"].upper())
     set_run_font(type_run, Pt(16), bold=True)
 
-    lecture_title = str(title or "Лекция")
+    lecture_title = str(title or labels["lecture"])
 
     lecture_para = doc.add_paragraph()
     lecture_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -432,8 +435,9 @@ def build_doc(
 
 def build_lecture_docx(
     lecture_text,
-    title="Лекция",
+    title=None,
     *,
+    language="Русский",
     college=None,
     subject=None,
     teacher=None,
@@ -441,6 +445,7 @@ def build_lecture_docx(
     course=None,
     lesson_date=None,
 ):
+    labels = lecture_labels(language)
     payload = _lesson_fields(lecture_text)
 
     doc = Document()
@@ -448,6 +453,7 @@ def build_lecture_docx(
 
     _add_title_page(
         doc,
+        language=language,
         college=college,
         subject=subject,
         title=title,
@@ -458,7 +464,7 @@ def build_lecture_docx(
     )
 
     if payload.get("relevance"):
-        doc.add_heading("Актуальность", level=1)
+        doc.add_heading(labels["relevance"], level=1)
 
         paragraph = doc.add_paragraph(
             payload["relevance"]
@@ -466,17 +472,17 @@ def build_lecture_docx(
         normalize_paragraph(paragraph)
 
     if payload.get("learning_goals"):
-        doc.add_heading("Цели обучения", level=1)
+        doc.add_heading(labels["learning_goals"], level=1)
 
         for item in payload["learning_goals"]:
             _add_list_item(doc, str(item))
 
     if payload.get("key_terms"):
-        doc.add_heading("Ключевые понятия", level=1)
+        doc.add_heading(labels["key_terms"], level=1)
 
         for term in payload["key_terms"]:
             doc.add_heading(
-                str(term.get("term", "Понятие")),
+                str(term.get("term", labels["term"])),
                 level=2,
             )
 
@@ -488,13 +494,13 @@ def build_lecture_docx(
 
     if payload.get("main_material"):
         doc.add_heading(
-            "Основной теоретический материал",
+            labels["main_material"],
             level=1,
         )
 
         for section in payload["main_material"]:
             doc.add_heading(
-                str(section.get("title", "Материал")),
+                str(section.get("title", labels["material"])),
                 level=2,
             )
 
@@ -505,14 +511,14 @@ def build_lecture_docx(
                 normalize_paragraph(paragraph)
 
             if section.get("examples"):
-                doc.add_heading("Примеры", level=3)
+                doc.add_heading(labels["examples"], level=3)
 
                 for example in section.get("examples", []):
                     _add_list_item(doc, str(example))
 
     if payload.get("practice_examples"):
         doc.add_heading(
-            "Практические примеры",
+            labels["practice_examples"],
             level=1,
         )
 
@@ -523,62 +529,62 @@ def build_lecture_docx(
         case = payload["case_study"]
 
         doc.add_heading(
-            "Профессиональная ситуация / кейс",
+            labels["case_study"],
             level=1,
         )
 
         _add_block(
             doc,
-            "Сценарий",
+            labels["scenario"],
             case.get("scenario", ""),
         )
 
         _add_block(
             doc,
-            "Анализ",
+            labels["analysis"],
             case.get("analysis", ""),
         )
 
         _add_block(
             doc,
-            "Решение",
+            labels["solution"],
             case.get("solution", ""),
         )
 
     if payload.get("common_errors"):
         doc.add_heading(
-            "Типичные ошибки",
+            labels["common_errors"],
             level=1,
         )
 
         for item in payload["common_errors"]:
             _add_block(
                 doc,
-                "Ошибка",
+                labels["error"],
                 item.get("error", ""),
             )
 
             _add_block(
                 doc,
-                "Почему возникает",
+                labels["why"],
                 item.get("why", ""),
             )
 
             _add_block(
                 doc,
-                "Как исправить",
+                labels["fix"],
                 item.get("fix", ""),
             )
 
     if payload.get("summary"):
-        doc.add_heading("Резюме", level=1)
+        doc.add_heading(labels["summary"], level=1)
 
         for item in payload["summary"]:
             _add_list_item(doc, str(item))
 
     if payload.get("review_questions"):
         doc.add_heading(
-            "Вопросы для закрепления",
+            labels["review_questions"],
             level=1,
         )
 
@@ -593,7 +599,7 @@ def build_lecture_docx(
 
     if payload.get("preparation_for_practice"):
         doc.add_heading(
-            "Подготовка к практическому занятию",
+            labels["preparation_for_practice"],
             level=1,
         )
 
@@ -607,7 +613,7 @@ def build_lecture_docx(
         para.alignment = WD_ALIGN_PARAGRAPH.CENTER
         para.text = ""
 
-        footer_label = para.add_run("Страница ")
+        footer_label = para.add_run(labels["page"] + " ")
         set_run_font(
             footer_label,
             size=Pt(12),
