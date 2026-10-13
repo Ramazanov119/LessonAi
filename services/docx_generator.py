@@ -1,7 +1,9 @@
 import json
+import re
 from datetime import date, datetime
 from pathlib import Path
 from io import BytesIO
+from zipfile import ZipFile
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -9,6 +11,11 @@ from docx.shared import Cm, Inches, Pt
 
 from config.colleges import get_college_config
 from services.lecture_localization import lecture_labels
+from services.lesson_validation import lesson_date_value, normalize_meta_lesson
+from services.meta_docx import fill_meta_tables
+from services.meta_localization import meta_labels
+from services.meta_formatting import dynamic_run_font
+from services.q_docx import q_template_fields, localize_q_section
 from services.document_style import (
     add_page_number,
     configure_document,
@@ -222,66 +229,57 @@ def _field_value(key, value):
     return str(value)
 
 
-def _replace_placeholders(paragraph, fields):
+def _replace_placeholders(paragraph, fields, *, meta_font=False):
     if not fields:
         return
-
+    runs = list(paragraph.runs)
+    text = "".join(run.text for run in runs)
+    offsets = []
+    position = 0
+    for run in runs:
+        offsets.append((position, position + len(run.text)))
+        position += len(run.text)
+    pattern = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}|\{([a-zA-Z0-9_]+)\}")
     applied = False
-    for run in list(paragraph.runs):
-        original_text = run.text or ""
-        replaced = original_text
-        for key, value in fields.items():
-            placeholder = "{" + str(key) + "}"
-            if placeholder in replaced:
-                replaced = replaced.replace(
-                    placeholder,
-                    _field_value(key, value),
-                )
-        if replaced != original_text:
-            run.text = replaced
-            set_run_font(run, size=Pt(11))
-            applied = True
-
-    if not applied and paragraph.runs:
-        paragraph_text = "".join(run.text for run in paragraph.runs)
-        replaced = paragraph_text
-        for key, value in fields.items():
-            placeholder = "{" + str(key) + "}"
-            if placeholder in replaced:
-                replaced = replaced.replace(
-                    placeholder,
-                    _field_value(key, value),
-                )
-        if replaced != paragraph_text:
-            paragraph.text = replaced
-            for run in paragraph.runs:
-                set_run_font(run, size=Pt(11))
-
-    if not paragraph.runs and "{" in paragraph.text:
-        text = paragraph.text
-        for key, value in fields.items():
-            placeholder = "{" + str(key) + "}"
-            if placeholder in text:
-                text = text.replace(
-                    placeholder,
-                    _field_value(key, value),
-                )
-        paragraph.text = text
-        if not paragraph.runs:
-            paragraph.add_run()
+    for match in reversed(list(pattern.finditer(text))):
+        key = match.group(1) or match.group(2)
+        if key not in fields:
+            continue
+        applied = True
+        replacement = _field_value(key, fields[key])
+        first = True
+        for run, (start, end) in zip(runs, offsets):
+            if end <= match.start() or start >= match.end():
+                continue
+            left = max(0, match.start() - start)
+            right = min(end - start, match.end() - start)
+            run.text = run.text[:left] + (replacement if first else "") + run.text[right:]
+            first = False
+    if applied and meta_font:
         for run in paragraph.runs:
-            set_run_font(run, size=Pt(11))
+            dynamic_run_font(run)
 
 
-def _fill_document(doc, fields):
-    for paragraph in doc.paragraphs:
-        _replace_placeholders(paragraph, fields)
+def _document_paragraphs(doc):
+    # XML traversal includes nested tables, headers, footers and text boxes.
+    from docx.text.paragraph import Paragraph
+    parts = [doc._element]
+    # Inspect existing parts only: accessing an undefined section header would
+    # create a new blank header and change the source template.
+    for part in doc.part.related_parts.values():
+        if part.content_type.endswith(("wordprocessingml.header+xml", "wordprocessingml.footer+xml")):
+            parts.append(part._element)
+    seen = set()
+    for part in parts:
+        for element in part.xpath('.//w:p'):
+            if element not in seen:
+                seen.add(element)
+                yield Paragraph(element, doc)
 
-    for table in doc.tables:
-        for row in table.rows:
-            for cell in row.cells:
-                for paragraph in cell.paragraphs:
-                    _replace_placeholders(paragraph, fields)
+
+def _fill_document(doc, fields, *, meta_font=False):
+    for paragraph in _document_paragraphs(doc):
+        _replace_placeholders(paragraph, fields, meta_font=meta_font)
 
 
 def _meta_template_fields(content):
@@ -369,6 +367,30 @@ def _meta_template_fields(content):
     }
 
 
+def _save_template_document(doc, template_path):
+    """Retain untouched template package parts byte-for-byte (styles/media/etc.)."""
+    rendered = BytesIO()
+    doc.save(rendered)
+    result = BytesIO()
+    from lxml import etree
+    namespaces = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    def texts(xml):
+        return etree.fromstring(xml).xpath('//w:t/text()', namespaces=namespaces)
+    with ZipFile(template_path) as original, ZipFile(rendered) as generated, ZipFile(result, 'w') as output:
+        for entry in original.infolist():
+            name = entry.filename
+            data = original.read(name)
+            if name == 'word/document.xml':
+                data = generated.read(name)
+            elif name.startswith(('word/header', 'word/footer')) and name.endswith('.xml'):
+                changed = generated.read(name)
+                if texts(data) != texts(changed):
+                    data = changed
+            output.writestr(entry, data)
+    result.seek(0)
+    return result
+
+
 def build_doc(
     title,
     content,
@@ -376,15 +398,33 @@ def build_doc(
     visual=None,
     template_path=LESSON_TEMPLATE,
     fields=None,
+    college=None,
 ):
     if title == "План урока" and Path(template_path).exists():
         doc = Document(template_path)
 
         # Основные поля, которые уже существовали в проекте.
         template_fields = _lesson_fields(content)
+        # The form/saved lesson date always wins over generated content.
+        metadata = fields or {}
+        selected_date = next((metadata[key] for key in ("lesson_date", "date", "data")
+                              if metadata.get(key) not in (None, "")), None)
+        formatted_date = lesson_date_value(selected_date).strftime("%d.%m.%Y")
+        is_meta = str(college or "").upper() == "META" or Path(template_path).resolve() == get_college_config("META")["template"].resolve()
+        if is_meta:
+            template_fields = normalize_meta_lesson(
+                content, language=metadata.get("language", "Русский"),
+                lesson_type=metadata.get("lesson_type", ""), lesson_date=selected_date,
+            )
+            fill_meta_tables(doc, template_fields, metadata.get("language", "Русский"))
+
+        is_q = str(college or "").upper() == "Q" or Path(template_path).resolve() == get_college_config("Q")["template"].resolve()
+        q_fields = q_template_fields(template_fields, metadata.get("language", "Русский")) if is_q else {}
+        if is_q:
+            localize_q_section(doc, metadata.get("language", "Русский"))
 
         # Дополнительные поля META-шаблона.
-        meta_fields = _meta_template_fields(content)
+        meta_fields = _meta_template_fields(template_fields)
 
         # Объединяем оба набора.
         #
@@ -399,9 +439,16 @@ def build_doc(
             **template_fields,
             **meta_fields,
             **(fields or {}),
+            **q_fields,
         }
 
-        _fill_document(doc, all_fields)
+        if is_meta:
+            labels = meta_labels(metadata.get("language", "Русский"))
+            all_fields.update({key: labels[key] for key in ("explanatory_method_label", "practical_task_label")})
+
+        all_fields.update(date=formatted_date, data=formatted_date,
+                          lesson_date=formatted_date + (" ж./г." if is_meta else ""))
+        _fill_document(doc, all_fields, meta_font=is_meta)
         # Preserve the original Word template structure and formatting; only
         # replace the placeholder text already present in the template.
 
@@ -425,6 +472,9 @@ def build_doc(
     if visual and title != "План урока":
         doc.add_heading("Иллюстрация", 2)
         doc.add_paragraph(visual)
+
+    if title == "План урока" and Path(template_path).exists():
+        return _save_template_document(doc, template_path)
 
     file = BytesIO()
     doc.save(file)

@@ -149,6 +149,34 @@ class SupabaseService:
         except Exception as error:
             raise AuthenticationError("Не удалось завершить сессию.") from error
 
+    def get_account_preferences(self):
+        """Authenticated user's metadata; never read another account or use admin APIs."""
+        try:
+            user = self.client.auth.get_user().user
+            if user is None:
+                raise ValueError('No authenticated user')
+            return {'id': user.id, 'metadata': dict(user.user_metadata or {})}
+        except Exception as error:
+            raise SupabaseServiceError('Не удалось загрузить пользовательские настройки.') from error
+
+    def mark_release_seen(self, release_id):
+        from services.release_notice import SEEN_KEY
+        account = self.get_account_preferences()
+        previous = account['metadata'].get(SEEN_KEY, [])
+        previous = previous if isinstance(previous, list) else []
+        if release_id in previous:
+            return False
+        seen = list(dict.fromkeys([item for item in previous if isinstance(item, str)] + [release_id]))
+        try:
+            # Update only our metadata key. Auth merges top-level data keys;
+            # profile, role, subscription, XP and language are never submitted.
+            response = self.client.auth.update_user({'data': {SEEN_KEY: seen}})
+            if response.user is None or release_id not in (response.user.user_metadata or {}).get(SEEN_KEY, []):
+                raise ValueError('Update not confirmed')
+        except Exception as error:
+            raise SupabaseServiceError('Не удалось сохранить просмотр уведомления.') from error
+        return True
+
     def get_profile(self) -> TeacherProfile:
         try:
             response = (

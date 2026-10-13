@@ -228,7 +228,13 @@ def create_lesson(
     lesson_type,
     lesson_duration,
     config,
+    *,
+    college=None,
+    lesson_date=None,
 ):
+    if str(college or "").upper() == "META":
+        from config.colleges import get_college_config
+        lesson_duration = get_college_config("META")["lesson_duration"]
     system = """
 Ты опытный методист колледжа Казахстана, специализирующийся на разработке
 учебных занятий для системы ТиПО.
@@ -260,8 +266,7 @@ assessment_criteria,
 values,
 learning_goal,
 developmental_goal,
-educational_goal,
-date.
+educational_goal.
 
 Каждый раздел должен быть содержательно заполнен и соответствовать теме,
 типу урока, специальности и практической деятельности студентов.
@@ -563,30 +568,77 @@ interdisciplinary_connections должны быть заполнены коро�
 Проверь арифметическую сумму time1–time7 перед формированием JSON.
 
 """
-    prompt = f"""
-Создай учебно-методическую лекцию для колледжа.
-
-Предмет: {subject}
-Тема: {topic}
-Язык: {language}
-Специальность: {specialty}
-Председатель ПЦК: {pck}
-Тип урока: {lesson_type}
-
-Сделай лекцию структурированной по разделам:
-1. Тема
-2. Актуальность
-3. Цели обучения
-4. Ключевые понятия
-5. Основной теоретический материал
-6. Практические примеры
-7. Разбор типичной ситуации
-8. Типичные ошибки
-9. Краткое резюме
-10. Вопросы для закрепления
-11. Подготовка к практическому занятию
+    from services.lesson_validation import normalize_meta_lesson, lesson_date_value, BLOOM_LEVELS, language_code
+    from config.colleges import get_college_config
+    if str(college or "").upper() == "META":
+        # Extend the existing request; no additional provider call.
+        lesson_duration = get_college_config("META")["lesson_duration"]
+        levels = ", ".join(BLOOM_LEVELS[language_code(language)])
+        system = system.replace(
+            '- обязательно начинаться со слова «Научить»;',
+            '- начинаться с глагола обучения на выбранном языке: «Научить», «Үйрету» или «Teach»;',
+        )
+        prompt += f"""
+Дополнительная структура для META College, продолжительность {lesson_duration} минут.
+Кроме существующих строковых полей добавь:
+lesson_duration: {lesson_duration},
+lesson_stages: массив объектов с field_key, name, duration_minutes (целое > 0), content.
+field_key по порядку: org_steps, actualization, theory, practice, homework, assessment, reflection.
+name и content — на языке {language}. content совпадает с соответствующим строковым полем.
+Распредели время по типу занятия {lesson_type}; для практики/лабораторной выдели больше времени
+на самостоятельную работу, для лекции — на объяснение. Сумма ровно {lesson_duration}.
+Не указывай время внутри name/content; минуты хранятся только в duration_minutes.
+assessment_items: массив объектов с task_name, stage_key, bloom_level,
+assessment_criterion, descriptors, points (целое >= 0).
+stage_key — field_key этапа, в котором студенты выполняют задание.
+task_name дословно присутствует в content этого этапа; каждое оцениваемое задание уникально.
+Уровни Блума на выбранном языке: {levels}.
+Дескрипторы — массив объектов {{"text": "наблюдаемое действие", "points": 5}}.
+Не вписывай баллы внутрь text; сумма баллов дескрипторов равна points задания.
+Общая сумма points всех заданий ровно 100. Не копируй образец универсальных заданий.
+Подбирай конкретные задания, критерии и дескрипторы по теме, целям, результатам,
+теоретическому материалу, практике и деятельности обучающихся в данном плане.
+Критерий должен измерять выполнение именно этого задания, дескрипторы раскрывают критерий.
+В content этапа подробно опиши действия и предметы оценки (например адрес отправителя и ссылку).
+Каждый критерий и дескриптор должен содержать конкретные предметные термины из content своего этапа,
+используй одинаковую терминологию, чтобы связь проверялась программно.
+Все значения, включая заголовки, уровни Блума, дескрипторы, названия и описание методов
+(explanatory_illustrative_method) и практических заданий (practical_task) — на языке {language}.
 """
-    return openai_generate(prompt, system, config)
+    if str(college or "").upper() == "Q":
+        prompt += f"""
+Для Q College заполни строковое поле interdisciplinary_connections.
+Определи обычно 1–3 действительно связанных предмета по дисциплине {subject}, теме {topic},
+специальности {specialty} и сформулированным целям занятия.
+Формат: «Дисциплина — конкретные используемые знания или навыки»; связи разделяй точкой с запятой.
+Не ограничивайся перечнем предметов, не добавляй искусственные связи и длинные объяснения.
+Не утверждай, что предмет входит в учебный план специальности: таких данных нет.
+Поле полностью на языке {language}. Это дополнительный элемент шаблона Q,
+не утверждай его обязательность по приказу № 130.
+"""
+    system += "\nДату не придумывай: поля date/data не генерируй, дата подставляется приложением."
+    generated = openai_generate(prompt, system, config)
+    if str(college or "").upper() == "META":
+        try:
+            payload = normalize_meta_lesson(generated, language=language, lesson_type=lesson_type,
+                                            lesson_date=lesson_date)
+        except ValueError as error:
+            raise AIServiceError(str(error)) from error
+        return json.dumps(payload, ensure_ascii=False)
+    # Keep the existing return type while removing AI dates from the saved plan.
+    from services.lesson_validation import parse_lesson
+    payload = parse_lesson(generated)
+    if str(college or "").upper() == "Q":
+        from services.q_docx import q_connections
+        try:
+            payload['interdisciplinary_connections'] = q_connections(payload)
+        except ValueError as error:
+            raise AIServiceError(str(error)) from error
+    selected = lesson_date_value(lesson_date).isoformat()
+    payload.update(date=selected, data=selected, lesson_date=selected)
+    return json.dumps(payload, ensure_ascii=False)
+
+
 def create_lecture(subject, topic, language, specialty, pck, lesson_type, config):
     system = """
 Ты методист колледжа Казахстана. Пиши академичный и профессиональный материал

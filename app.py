@@ -16,6 +16,7 @@ from services.ai import (
     rework_lecture,
     rework_practice,
 )
+from services.lesson_validation import almaty_today, lesson_date_value, LessonValidationError
 from services.docx_generator import build_doc, build_lecture_docx, build_practice_docx
 from services.presentation_generator import build_presentation, render_nb_deck
 from services.presentation_service import (
@@ -35,6 +36,7 @@ from services.supabase_service import (
     SupabaseServiceError,
     create_supabase_client,
 )
+from ui.release_notice import render_release_notice
 from ui.theme import apply_theme
 
 logger = logging.getLogger(__name__)
@@ -101,6 +103,7 @@ LANGUAGE_CODES = {
 
 
 def _store_session(session):
+    st.session_state["current_page"] = "Главная"
     st.session_state["auth_session"] = {
         "access_token": session.access_token,
         "refresh_token": session.refresh_token,
@@ -313,16 +316,18 @@ def _material_download(lesson, material):
             "topic": lesson["topic"],
             "subject": lesson["subject"],
             "teacher": lesson.get("full_name", ""),
-            "date": str(lesson["lesson_date"]),
+            "date": lesson.get("lesson_date"),
             "course": lesson["course"],
             "group": lesson["group_name"],
             "lesson_type": lesson["lesson_type"],
+            "language": lesson["language"],
         }
         return "Скачать DOCX", build_doc(
             "План урока",
             content,
             template_path=get_college_config(lesson["college"])["template"],
             fields=fields,
+            college=lesson["college"],
         ), "lesson.docx"
     if material_type == "lecture":
         return "Скачать DOCX", build_lecture_docx(
@@ -370,7 +375,7 @@ def _render_lesson_card(lesson, materials):
     title = html.escape(str(lesson.get("topic", "Без темы")))
     subject = html.escape(str(lesson.get("subject", "")))
     metadata = " · ".join(
-        html.escape(str(lesson.get(key, "")))
+        html.escape(str(get_college_config("META")["lesson_duration"] if key == "duration" and lesson.get("college") == "META" else lesson.get(key, "")))
         for key in ("group_name", "lesson_date", "duration")
     )
     st.markdown(
@@ -394,7 +399,7 @@ def _render_lesson_workspace(service, lessons):
     st.subheader("Мои занятия")
     search = st.text_input("Поиск по теме, предмету или группе", placeholder="Например: сети")
     period = st.radio("Период", ["Все", "Сегодня", "Эта неделя"], horizontal=True)
-    today = date.today()
+    today = almaty_today()
     filtered = []
     for lesson in lessons:
         haystack = " ".join(
@@ -437,7 +442,7 @@ def _render_lesson_workspace(service, lessons):
         st.subheader(html.escape(str(selected.get("topic", "Занятие"))))
         st.caption(
             f"{selected.get('subject', '')} · {selected.get('group_name', '')} · "
-            f"{selected.get('lesson_date', '')} · {selected.get('duration', FIXED_LESSON_DURATION)}"
+            f"{selected.get('lesson_date', '')} · {get_college_config('META')['lesson_duration'] if selected['college'] == 'META' else selected.get('duration', FIXED_LESSON_DURATION)}"
         )
         materials = service.list_materials(selected["id"])
         material_map = {item["material_type"]: item for item in materials}
@@ -471,7 +476,7 @@ def _render_lesson_workspace(service, lessons):
                             filename,
                             key=f"download_{selected['id']}_{material_type}",
                         )
-                    except PresentationServiceError as error:
+                    except (PresentationServiceError, LessonValidationError) as error:
                         st.error(str(error))
                 with rework_column:
                     st.button(
@@ -484,18 +489,22 @@ def _render_lesson_workspace(service, lessons):
         opened_id = st.session_state.get("opened_material_id")
         opened_material = next((item for item in materials if item["id"] == opened_id), None)
         if opened_material and opened_material["material_type"] != "presentation":
-            render_document_preview(
-                opened_material["content"],
-                MATERIAL_MODE_LABELS[opened_material["material_type"]],
-                {
-                    "language": selected["language"],
-                    "college": selected["college"],
-                    "teacher": selected.get("full_name", ""),
-                    "subject": selected["subject"],
-                    "topic": selected["topic"],
-                    "date": str(selected["lesson_date"]),
-                },
-            )
+            try:
+                render_document_preview(
+                    opened_material["content"],
+                    MATERIAL_MODE_LABELS[opened_material["material_type"]],
+                    {
+                        "language": selected["language"],
+                        "college": selected["college"],
+                        "teacher": selected.get("full_name", ""),
+                        "subject": selected["subject"],
+                        "topic": selected["topic"],
+                        "date": str(selected["lesson_date"]),
+                        "lesson_type": selected["lesson_type"],
+                    },
+                )
+            except LessonValidationError as error:
+                st.error(str(error))
 
 
 def _material_content(content):
@@ -573,6 +582,8 @@ st.radio(
     on_change=_sync_current_page,
     args=(workspace_view_key,),
 )
+render_release_notice(SUPABASE_SERVICE, current_page)
+
 if current_page in ("Главная", "Мои занятия"):
     st.markdown(
         f"<div class='ai-edu-panel'><h2>Добро пожаловать, "
@@ -606,7 +617,7 @@ mode = st.radio(
 college_config = get_college_config(teacher_profile.college)
 selected_college = selected_lesson["college"] if selected_lesson else teacher_profile.college
 college_config = get_college_config(selected_college)
-lesson_duration = selected_lesson.get("duration") if selected_lesson else college_config.get("lesson_duration")
+lesson_duration = college_config["lesson_duration"] if selected_college == "META" else (selected_lesson.get("duration") if selected_lesson else college_config.get("lesson_duration"))
 selected_specialty = selected_lesson.get("speciality", "Не указано") if selected_lesson else None
 selected_chair = selected_lesson.get("chair", "Не указано") if selected_lesson else None
 specialties = college_config["specialties"] or ["Не указано"]
@@ -630,7 +641,7 @@ with form_left:
 with form_right:
     subject = st.text_input("Предмет", value=selected_lesson["subject"] if selected_lesson else "", disabled=selected_lesson is not None, key=f"subject_{form_key_suffix}")
     group_name = st.text_input("Группа", value=selected_lesson["group_name"] if selected_lesson else "", disabled=selected_lesson is not None, key=f"group_{form_key_suffix}")
-    lesson_date = st.date_input("Дата урока", value=date.fromisoformat(str(selected_lesson["lesson_date"])) if selected_lesson else date.today(), disabled=selected_lesson is not None, key=f"date_{form_key_suffix}")
+    lesson_date = st.date_input("Дата урока", value=lesson_date_value(selected_lesson.get("lesson_date")) if selected_lesson else almaty_today(), disabled=selected_lesson is not None, key=f"date_{form_key_suffix}")
     specialty = st.selectbox("Специальность", specialties, index=specialties.index(selected_specialty) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"specialty_{form_key_suffix}")
 pck = st.selectbox("Председатель ПЦК", pck_chairs, index=pck_chairs.index(selected_chair) if selected_lesson else 0, disabled=selected_lesson is not None, key=f"pck_{form_key_suffix}")
 
@@ -688,6 +699,8 @@ if mode == "Поурочный план":
                         lesson_type,
                         lesson_duration,
                         AI_CONFIG,
+                        college=selected_college,
+                        lesson_date=lesson_date,
                     )
                     _log_create_event(material_type, "AI generation completed", subject, topic)
                     progress.write("🎯 Формируем цели обучения...")
@@ -730,6 +743,7 @@ if mode == "Поурочный план":
                         "course": course,
                         "group": group_name.strip(),
                         "lesson_type": lesson_type,
+                        "language": language,
                     }
                     stage = "document generation"
                     _log_create_event(material_type, "document generation started", subject, topic)
@@ -739,6 +753,7 @@ if mode == "Поурочный план":
                         lesson,
                         template_path=college_config["template"],
                         fields=lesson_fields,
+                        college=selected_college,
                     )
                     _log_create_event(material_type, "document generation completed", subject, topic)
                 stage = "preview"
@@ -751,6 +766,9 @@ if mode == "Поурочный план":
                 st.download_button("Скачать DOCX", doc, "lesson.docx", type="secondary")
                 _log_create_event(material_type, "completed", subject, topic)
             except DailyLimitExceeded as error:
+                _log_create_failure(material_type, stage, subject, topic, error)
+                st.error(str(error))
+            except (AIServiceError, LessonValidationError) as error:
                 _log_create_failure(material_type, stage, subject, topic, error)
                 st.error(str(error))
             except Exception as error:

@@ -180,6 +180,39 @@ def _practice_body(data):
     return "".join(blocks)
 
 
+def _meta_lesson_body(data, metadata):
+    from services.lesson_validation import normalize_meta_lesson
+    from services.meta_localization import meta_labels
+    language = metadata.get("language", "Русский")
+    data = normalize_meta_lesson(data, language=language,
+                                 lesson_type=metadata.get("lesson_type", ""),
+                                 lesson_date=metadata.get("date"))
+    labels = meta_labels(language)
+    blocks = [f"<h1>{labels['duration']}: {data['lesson_duration']} {labels['minute']}</h1>"]
+    for title, key in ((labels['goal'], "goal"), (labels['results'], "results")):
+        if data.get(key):
+            blocks.extend((f"<h1>{title}</h1>", _paragraph(data[key])))
+    for label, key in (("explanatory_method_label", "explanatory_illustrative_method"),
+                       ("practical_task_label", "practical_task")):
+        if data.get(key):
+            blocks.extend((f"<h2>{labels[label]}:</h2>", _paragraph(data[key])))
+    for stage in data["lesson_stages"]:
+        blocks.append(f"<h2>{_safe_text(stage['name'])} ({stage['duration_minutes']} {labels['minute']})</h2>")
+        blocks.append(_paragraph(stage["content"]))
+    blocks.append("<table style='width:100%;table-layout:fixed;border-collapse:collapse'><thead><tr>")
+    for heading in labels['headers']:
+        blocks.append(f"<th style='border:1px solid #999;padding:5px;overflow-wrap:anywhere'>{heading}</th>")
+    blocks.append("</tr></thead><tbody>")
+    for item in data["assessment_items"]:
+        descriptors = "<br>".join(f"{_safe_text(text)} — {points}" for text, points in
+                                  zip(item["descriptors"], item["descriptor_points"]))
+        values = (_safe_text(item["task_name"]), _safe_text(item["bloom_level"]),
+                  _safe_text(item["assessment_criterion"]), descriptors, str(item["points"]))
+        blocks.append("<tr>" + "".join(f"<td style='border:1px solid #999;padding:5px;overflow-wrap:anywhere'>{value}</td>" for value in values) + "</tr>")
+    blocks.append(f"<tr><td colspan='4'>{labels['total']}</td><td>100</td></tr></tbody></table>")
+    return "".join(blocks)
+
+
 def _generic_body(data, document_type):
     blocks = [f"<h1>{_safe_text(document_type)}</h1>"]
     for key, value in data.items():
@@ -207,6 +240,8 @@ def render_document_preview(content, document_type, metadata, *, schema=None, vi
         body = _lecture_body(content, metadata.get("language"))
     elif document_type == "Практическое занятие":
         body = _practice_body(content)
+    elif document_type in ("План урока", "Поурочный план") and str(metadata.get("college", "")).upper() == "META" and content.get("assessment_items"):
+        body = _meta_lesson_body(content, metadata)
     else:
         body = _generic_body(content, document_type)
     if schema:
