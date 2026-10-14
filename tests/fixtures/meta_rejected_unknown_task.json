@@ -1,0 +1,233 @@
+{
+  "schema_version": 1,
+  "phase": "normalization",
+  "error": {
+    "type": "LessonValidationError",
+    "code": "unknown_task_id",
+    "task_id": "task_006"
+  },
+  "text_policy": "All free text, metadata and original IDs removed",
+  "lesson": {
+    "lesson_duration": {
+      "invalid_type": "NoneType"
+    },
+    "lesson_stages": [
+      {
+        "field_key": "org_steps",
+        "name": "Наблюдаемое действие",
+        "duration_minutes": 5,
+        "content": "Наблюдаемое действие",
+        "tasks": []
+      },
+      {
+        "field_key": "actualization",
+        "name": "Наблюдаемое действие",
+        "duration_minutes": 10,
+        "content": "Наблюдаемое действие",
+        "tasks": [
+          {
+            "id": "task_001",
+            "name": "Наблюдаемое действие",
+            "instruction": "Наблюдаемое действие"
+          }
+        ]
+      },
+      {
+        "field_key": "theory",
+        "name": "Наблюдаемое действие",
+        "duration_minutes": 20,
+        "content": "Наблюдаемое действие",
+        "tasks": [
+          {
+            "id": "task_002",
+            "name": "Наблюдаемое действие",
+            "instruction": "Наблюдаемое действие"
+          }
+        ]
+      },
+      {
+        "field_key": "practice",
+        "name": "Наблюдаемое действие",
+        "duration_minutes": 25,
+        "content": "Наблюдаемое действие",
+        "tasks": [
+          {
+            "id": "task_003",
+            "name": "Наблюдаемое действие",
+            "instruction": "Наблюдаемое действие"
+          }
+        ]
+      },
+      {
+        "field_key": "homework",
+        "name": "Наблюдаемое действие",
+        "duration_minutes": 3,
+        "content": "Наблюдаемое действие",
+        "tasks": []
+      },
+      {
+        "field_key": "assessment",
+        "name": "Наблюдаемое действие",
+        "duration_minutes": 4,
+        "content": "Наблюдаемое действие",
+        "tasks": [
+          {
+            "id": "task_004",
+            "name": "Наблюдаемое действие",
+            "instruction": "Наблюдаемое действие"
+          }
+        ]
+      },
+      {
+        "field_key": "reflection",
+        "name": "Наблюдаемое действие",
+        "duration_minutes": 3,
+        "content": "Наблюдаемое действие",
+        "tasks": [
+          {
+            "id": "task_005",
+            "name": "Наблюдаемое действие",
+            "instruction": "Наблюдаемое действие"
+          }
+        ]
+      }
+    ],
+    "assessment_items": [
+      {
+        "task_id": "task_006",
+        "stage_key": "actualization",
+        "task_name": "Наблюдаемое действие",
+        "bloom_level": "Знание",
+        "assessment_criterion": {
+          "task_id": "task_001",
+          "text": "Наблюдаемое действие"
+        },
+        "descriptors": [
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "result": "Наблюдаемое действие",
+            "task_id": "task_001",
+            "points": 10,
+            "requires_result": true
+          },
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "task_id": "task_001",
+            "points": 10
+          }
+        ],
+        "points": 20
+      },
+      {
+        "task_id": "task_002",
+        "stage_key": "theory",
+        "task_name": "Наблюдаемое действие",
+        "bloom_level": "Анализ",
+        "assessment_criterion": {
+          "task_id": "task_002",
+          "text": "Наблюдаемое действие"
+        },
+        "descriptors": [
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "result": "Наблюдаемое действие",
+            "task_id": "task_002",
+            "points": 10,
+            "requires_result": true
+          },
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "task_id": "task_002",
+            "points": 10
+          }
+        ],
+        "points": 20
+      },
+      {
+        "task_id": "task_003",
+        "stage_key": "practice",
+        "task_name": "Наблюдаемое действие",
+        "bloom_level": "Применение",
+        "assessment_criterion": {
+          "task_id": "task_003",
+          "text": "Наблюдаемое действие"
+        },
+        "descriptors": [
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "result": "Наблюдаемое действие",
+            "task_id": "task_003",
+            "points": 10,
+            "requires_result": true
+          },
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "task_id": "task_003",
+            "points": 10
+          }
+        ],
+        "points": 20
+      },
+      {
+        "task_id": "task_004",
+        "stage_key": "assessment",
+        "task_name": "Наблюдаемое действие",
+        "bloom_level": "Оценивание",
+        "assessment_criterion": {
+          "task_id": "task_004",
+          "text": "Наблюдаемое действие"
+        },
+        "descriptors": [
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "result": "Наблюдаемое действие",
+            "task_id": "task_004",
+            "points": 10,
+            "requires_result": true
+          },
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "task_id": "task_004",
+            "points": 10
+          }
+        ],
+        "points": 20
+      },
+      {
+        "task_id": "task_005",
+        "stage_key": "reflection",
+        "task_name": "Наблюдаемое действие",
+        "bloom_level": "Создание",
+        "assessment_criterion": {
+          "task_id": "task_005",
+          "text": "Наблюдаемое действие"
+        },
+        "descriptors": [
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "result": "Наблюдаемое действие",
+            "task_id": "task_005",
+            "points": 10,
+            "requires_result": true
+          },
+          {
+            "text": "Наблюдаемое действие",
+            "action": "Наблюдаемое действие",
+            "task_id": "task_005",
+            "points": 10
+          }
+        ],
+        "points": 20
+      }
+    ]
+  }
+}

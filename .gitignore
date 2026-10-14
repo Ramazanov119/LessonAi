@@ -5,3 +5,5 @@ __pycache__/
 .venv/
 venv/
 .env
+docs/qa/meta/debug/
+docs/qa/production-backups/

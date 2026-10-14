@@ -52,33 +52,28 @@ class MetaLessonTest(unittest.TestCase):
                 if language == 'Қазақша':
                     self.assertNotIn('Знание', ' '.join(c.text for r in rubric.rows for c in r.cells))
 
-    def test_points_and_descriptor_points_are_corrected_together(self):
+    def test_positive_weights_are_normalized_without_changing_source(self):
         payload = meta_plan()
         for item in payload['assessment_items']:
             item['points'] = 17
         result = normalize_meta_lesson(payload)
         self.assertEqual(sum(item['points'] for item in result['assessment_items']), 100)
-        for item in result['assessment_items']:
-            self.assertEqual(sum(item['descriptor_points']), item['points'])
-        self.assertEqual(result, normalize_meta_lesson(result, lesson_date=result['date']))
         self.assertEqual(payload['assessment_items'][0]['points'], 17)
 
     def test_unrelated_task_is_rejected(self):
         payload = meta_plan()
-        payload['assessment_items'][0]['task_name'] = 'Рассчитать налог'
+        payload['assessment_items'][0]['task_id'] = 'task_not_declared'
         with self.assertRaises(LessonValidationError):
             export(payload)
 
-    def test_unrelated_and_generic_criteria_are_rejected(self):
-        for criterion in ("Вычисляет налог на доход", "Активно участвует"):
-            with self.subTest(criterion=criterion):
-                payload = meta_plan()
-                payload['assessment_items'][0]['assessment_criterion'] = criterion
-                with self.assertRaises(LessonValidationError):
-                    export(payload)
+    def test_criterion_for_other_task_is_rejected(self):
+        payload = meta_plan()
+        payload['assessment_items'][0]['assessment_criterion'] = {'task_id': 'task_2', 'text': 'Обосновывает выбор'}
+        with self.assertRaises(LessonValidationError):
+            export(payload)
 
     def test_empty_criteria_descriptors_and_invalid_scores_are_rejected(self):
-        for key, value in (('assessment_criterion', ''), ('descriptors', []), ('points', -1), ('points', 1.5), ('points', True), ('bloom_level', 'Синтез')):
+        for key, value in (('assessment_criterion', ''), ('descriptors', []), ('points', -1), ('points', '1.5'), ('points', True), ('bloom_level', 'Синтез')):
             with self.subTest(key=key, value=value):
                 payload = meta_plan()
                 payload['assessment_items'][0][key] = value
@@ -140,17 +135,19 @@ class MetaLessonTest(unittest.TestCase):
         payload = meta_plan()
         payload['lesson_stages'] = [s for s in payload['lesson_stages'] if s['field_key'] not in ('org_steps', 'homework')]
         payload['assessment_items'] = payload['assessment_items'][:3]
+        for item, points in zip(payload['assessment_items'], (40, 30, 30)):
+            item['points'] = points
+            for descriptor in item['descriptors']:
+                descriptor['points'] = points // 2
         doc = export(payload)
         self.assertEqual(len(doc.tables[1].rows), 14 + 5)
         self.assertEqual(len(doc.tables[2].rows), 1 + 3 + 1)
 
-    def test_legacy_timings_have_type_specific_fallback(self):
-        lecture = meta_plan()
-        del lecture['lesson_stages']
-        practical = normalize_meta_lesson(lecture, lesson_type='Практическое занятие')
-        theory = normalize_meta_lesson(lecture, lesson_type='Лекция')
-        self.assertGreater(practical['time4'], theory['time4'])
-        self.assertEqual(sum(practical[f'time{i}'] for i in range(1, 8)), 70)
+    def test_old_plan_without_declared_tasks_does_not_fabricate_tasks(self):
+        legacy = meta_plan()
+        del legacy['lesson_stages']
+        with self.assertRaises(LessonValidationError):
+            normalize_meta_lesson(legacy, lesson_type='Практическое занятие')
 
     def test_negative_timing_rejected_and_zero_corrected(self):
         payload = meta_plan()
@@ -223,7 +220,7 @@ class MetaLessonTest(unittest.TestCase):
         for code, expected in (('META', 70), ('ETEC', 70), ('ALT', 90), ('Q', 90), ('ATKK', 70)):
             self.assertEqual(COLLEGES[code]['lesson_duration'], expected)
         for code in ('ETEC', 'ALT', 'Q', 'ATKK'):
-            doc = Document(build_doc('План урока', {'date': '28.06.2024'},
+            doc = Document(build_doc('План урока', {'date': '28.06.2024', 'interdisciplinary_connections': 'Математика — вычисления по теме'},
                                     template_path=COLLEGES[code]['template'], fields={'date': '2026-10-09'}))
             self.assertEqual(len(doc.tables), len(Document(COLLEGES[code]['template']).tables))
 

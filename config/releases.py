@@ -2,7 +2,7 @@
 CURRENT_RELEASE = {
     'release_id': 'release_2026_10_meta_q',
     # Enabled only after Q/META regression checks passed; no external deployment here.
-    'enabled': False,
+    'enabled': True,
     'duration_seconds': 15,
     'title_ru': 'LessonAI обновлён!',
     'title_kk': 'LessonAI жаңартылды!',

@@ -39,18 +39,25 @@ def prepare_notice(release, account, state, now, mark_seen, *, page='Главн�
         if not result:
             notices[key] = {'closed': True, 'expires_at': now}
             return None
-        active = {'closed': False, 'expires_at': now + release['duration_seconds']}
+        active = {'closed': False, 'expires_at': None, 'duration_seconds': release['duration_seconds']}
         notices[key] = active
-    if active['closed'] or now >= active['expires_at']:
+    if active['closed'] or (active['expires_at'] is not None and now >= active['expires_at']):
         active['closed'] = True
         return None
     code = notice_language(account.get('metadata', {}), state)
     return {'notice_key': key, 'title': release[f'title_{code}'],
             'message': release[f'message_{code}'], 'language': code,
-            'remaining_seconds': active['expires_at'] - now}
+            'remaining_seconds': (active['expires_at'] - now if active['expires_at'] is not None else active['duration_seconds'])}
 
 
 def dismiss_notice(state, key):
     active = state.get(STATE_KEY, {}).get(key)
     if active:
         active['closed'] = True
+
+
+def start_notice_timer(state, key, now):
+    """Start the server guard only after the browser confirms actual visibility."""
+    active = state.get(STATE_KEY, {}).get(key)
+    if active and not active['closed'] and active['expires_at'] is None:
+        active['expires_at'] = now + active['duration_seconds']

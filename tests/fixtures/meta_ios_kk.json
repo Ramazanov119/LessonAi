@@ -1,0 +1,237 @@
+{
+  "goal": "iOS құрылымын түсіндіру және әзірлеуде қолдану",
+  "results": "Архитектуралық шешімдерді негіздейді",
+  "resources": "iOS сызбасы, SDK анықтамалығы",
+  "evaluation_criteria": "iOS архитектуралық шешімдерін негіздейді",
+  "explanatory_illustrative_method": "iOS компоненттерінің сызбасын және қолданбаның жүйемен өзара әрекетін талдау",
+  "practical_task": "iOS компоненттерінің өзара әрекет сызбасын құрастыру",
+  "interdisciplinary_connections": "Информатика",
+  "date": "28.06.2024",
+  "data": "28.06.2024",
+  "lesson_stages": [
+    {
+      "field_key": "org_steps",
+      "name": "Ұйымдастыру кезеңі",
+      "duration_minutes": 5,
+      "content": "Оқытушы білім алушылардың дайындығын тексереді."
+    },
+    {
+      "field_key": "actualization",
+      "name": "Білімді өзектендіру",
+      "duration_minutes": 10,
+      "content": "iOS ерекшеліктерін атайды.",
+      "tasks": [
+        {
+          "id": "task_1",
+          "name": "iOS ерекшеліктерін атау",
+          "instruction": "iOS ерекшеліктерін атайды."
+        }
+      ]
+    },
+    {
+      "field_key": "theory",
+      "name": "Жаңа білімді қалыптастыру",
+      "duration_minutes": 20,
+      "content": "Ядро компоненттерін салыстырады.",
+      "tasks": [
+        {
+          "id": "task_2",
+          "name": "Ядро құрылымын салыстыру",
+          "instruction": "Ядро компоненттерін салыстырады."
+        }
+      ]
+    },
+    {
+      "field_key": "practice",
+      "name": "Практикалық жұмыс",
+      "duration_minutes": 25,
+      "content": "Компоненттердің өзара әрекетін сызады.",
+      "tasks": [
+        {
+          "id": "task_3",
+          "name": "Компоненттердің өзара әрекетін сызу",
+          "instruction": "Компоненттердің өзара әрекетін сызады."
+        }
+      ]
+    },
+    {
+      "field_key": "homework",
+      "name": "Үй тапсырмасы",
+      "duration_minutes": 3,
+      "content": "iOS қолданбасының өмірлік циклі туралы құжаттаманы оқу."
+    },
+    {
+      "field_key": "assessment",
+      "name": "Қорытындылау және бағалау",
+      "duration_minutes": 4,
+      "content": "Архитектуралық шешімді таңдайды.",
+      "tasks": [
+        {
+          "id": "task_4",
+          "name": "Архитектуралық шешімді бағалау",
+          "instruction": "Архитектуралық шешімді таңдайды."
+        }
+      ]
+    },
+    {
+      "field_key": "reflection",
+      "name": "Рефлексия",
+      "duration_minutes": 3,
+      "content": "Сабақты қорытындылайды.",
+      "tasks": [
+        {
+          "id": "task_5",
+          "name": "Қорытынды тұжырымдау",
+          "instruction": "Сабақты қорытындылайды."
+        }
+      ]
+    }
+  ],
+  "org_steps": "Оқытушы білім алушылардың дайындығын тексереді.",
+  "actualization": "iOS ерекшеліктерін атайды.",
+  "theory": "Ядро компоненттерін салыстырады.",
+  "practice": "Компоненттердің өзара әрекетін сызады.",
+  "homework": "iOS қолданбасының өмірлік циклі туралы құжаттаманы оқу.",
+  "assessment": "Архитектуралық шешімді таңдайды.",
+  "reflection": "Сабақты қорытындылайды.",
+  "assessment_items": [
+    {
+      "task_name": "iOS ерекшеліктерін атау",
+      "stage_key": "actualization",
+      "bloom_level": "Білу",
+      "assessment_criterion": {
+        "task_id": "task_1",
+        "text": "Жауабын негіздейді"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_1",
+          "text": "Қорытындыны мысалдармен дәлелдейді",
+          "action": "Қорытындыны дәлелдейді",
+          "result": "Кемінде екі мысал келтіреді",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_1",
+          "text": "Орындалған жұмысты көрсетеді",
+          "action": "Орындалған жұмысты көрсетеді",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_1"
+    },
+    {
+      "task_name": "Ядро құрылымын салыстыру",
+      "stage_key": "theory",
+      "bloom_level": "Талдау",
+      "assessment_criterion": {
+        "task_id": "task_2",
+        "text": "Жауабын негіздейді"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_2",
+          "text": "Қорытындыны мысалдармен дәлелдейді",
+          "action": "Қорытындыны дәлелдейді",
+          "result": "Кемінде екі мысал келтіреді",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_2",
+          "text": "Орындалған жұмысты көрсетеді",
+          "action": "Орындалған жұмысты көрсетеді",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_2"
+    },
+    {
+      "task_name": "Компоненттердің өзара әрекетін сызу",
+      "stage_key": "practice",
+      "bloom_level": "Қолдану",
+      "assessment_criterion": {
+        "task_id": "task_3",
+        "text": "Жауабын негіздейді"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_3",
+          "text": "Қорытындыны мысалдармен дәлелдейді",
+          "action": "Қорытындыны дәлелдейді",
+          "result": "Кемінде екі мысал келтіреді",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_3",
+          "text": "Орындалған жұмысты көрсетеді",
+          "action": "Орындалған жұмысты көрсетеді",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_3"
+    },
+    {
+      "task_name": "Архитектуралық шешімді бағалау",
+      "stage_key": "assessment",
+      "bloom_level": "Бағалау",
+      "assessment_criterion": {
+        "task_id": "task_4",
+        "text": "Жауабын негіздейді"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_4",
+          "text": "Қорытындыны мысалдармен дәлелдейді",
+          "action": "Қорытындыны дәлелдейді",
+          "result": "Кемінде екі мысал келтіреді",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_4",
+          "text": "Орындалған жұмысты көрсетеді",
+          "action": "Орындалған жұмысты көрсетеді",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_4"
+    },
+    {
+      "task_name": "Қорытынды тұжырымдау",
+      "stage_key": "reflection",
+      "bloom_level": "Жасау",
+      "assessment_criterion": {
+        "task_id": "task_5",
+        "text": "Жауабын негіздейді"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_5",
+          "text": "Қорытындыны мысалдармен дәлелдейді",
+          "action": "Қорытындыны дәлелдейді",
+          "result": "Кемінде екі мысал келтіреді",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_5",
+          "text": "Орындалған жұмысты көрсетеді",
+          "action": "Орындалған жұмысты көрсетеді",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_5"
+    }
+  ],
+  "fixture_provenance": "Synthetic regression from user-reported failure; not a captured provider response",
+  "subject": "Мобильді әзірлеу",
+  "topic": "iOS операциялық жүйесі"
+}

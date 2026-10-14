@@ -1,6 +1,7 @@
 import html
 import json
 import logging
+import uuid
 
 import streamlit as st
 from datetime import date
@@ -16,6 +17,7 @@ from services.ai import (
     rework_lecture,
     rework_practice,
 )
+from services.lesson_plan_service import generate_lesson_plan, PendingLessonPlan
 from services.lesson_validation import almaty_today, lesson_date_value, LessonValidationError
 from services.docx_generator import build_doc, build_lecture_docx, build_practice_docx
 from services.presentation_generator import build_presentation, render_nb_deck
@@ -103,6 +105,7 @@ LANGUAGE_CODES = {
 
 
 def _store_session(session):
+    st.session_state.pop("pending_lesson_plan", None)
     st.session_state["current_page"] = "Главная"
     st.session_state["auth_session"] = {
         "access_token": session.access_token,
@@ -205,24 +208,18 @@ def _show_generation_error():
 
 def _log_create_event(material_type, event, subject, topic):
     logger.info(
-        "[CREATE] %s material_type=%s subject=%r topic=%r",
+        "[CREATE] %s material_type=%s",
         event,
         material_type,
-        subject.strip(),
-        topic.strip(),
     )
 
 
 def _log_create_failure(material_type, stage, subject, topic, error):
-    logger.exception(
-        "[CREATE] failed material_type=%s subject=%r topic=%r stage=%s "
-        "exception_type=%s",
-        material_type,
-        subject.strip(),
-        topic.strip(),
-        stage,
-        type(error).__name__,
-    )
+    from services.meta_diagnostics import failure_metadata
+    details = failure_metadata(error)
+    logger.error("[CREATE] failed material_type=%s stage=%s validation_phase=%s error_type=%s error_code=%s task_token=%s",
+                 material_type, stage, details['phase'], details['error_type'], details['code'], details['task_token'])
+
 
 def _render_brand_header(*, daily_count=None, college=None):
     quota_class = ""
@@ -559,6 +556,7 @@ if header_logout.button("Выйти", type="tertiary"):
     try:
         SUPABASE_SERVICE.sign_out()
     finally:
+        st.session_state.pop("pending_lesson_plan", None)
         st.session_state.pop("auth_session", None)
         st.rerun()
 
@@ -664,7 +662,35 @@ if mode == "Поурочный план":
         disabled=selected_lesson is not None,
         key=f"lesson_type_{form_key_suffix}",
     )
-    if st.button("Создать план урока", type="primary", icon="✨"):
+    if st.button("Проверить доступность сохранения", key="check_lesson_storage"):
+        try:
+            SUPABASE_SERVICE.ensure_lesson_plan_storage()
+            st.success("Сохранение готовых планов доступно.")
+        except SupabaseServiceError as error:
+            st.error(str(error))
+    pending = st.session_state.get("pending_lesson_plan")
+    if pending:
+        st.info("Готовый план ожидает сохранения. Повторное сохранение не обращается к AI.")
+        st.download_button("Скачать готовый JSON", pending.content, "lesson-plan-ready.json", "application/json", key="pending_plan_json")
+        if st.button("Повторить сохранение", key="retry_pending_plan"):
+            try:
+                doc, saved_lesson = pending.save(SUPABASE_SERVICE)
+                daily_count = saved_lesson["daily_count"]
+                st.session_state.pop("pending_lesson_plan", None)
+                st.success("Готовый план сохранён.")
+                st.download_button("Скачать DOCX", doc, "lesson.docx", key="retried_plan_doc")
+                render_document_preview(pending.content, "План урока", {
+                    "college": pending.metadata.college, "teacher": pending.metadata.full_name,
+                    "subject": pending.metadata.subject, "topic": pending.metadata.topic,
+                    "language": pending.metadata.language, "date": pending.metadata.lesson_date.strftime("%d.%m.%Y"),
+                })
+                pending = None
+            except SupabaseServiceError as error:
+                st.error(str(error))
+            except Exception as error:
+                _log_create_failure("lesson_plan", "retry save", "", "", error)
+                _show_generation_error()
+    if st.button("Создать план урока", type="primary", icon="✨", disabled=pending is not None):
         required_fields = {
             "ФИО преподавателя": teacher_name,
             "Предмет": subject,
@@ -690,7 +716,9 @@ if mode == "Поурочный план":
                     stage = "AI generation"
                     _log_create_event(material_type, "AI generation started", subject, topic)
                     progress.write("🧠 Анализируем тему урока...")
-                    lesson = create_lesson(
+                    operation_id = str(uuid.uuid4())
+                    lesson = generate_lesson_plan(
+                        SUPABASE_SERVICE, create_lesson,
                         subject,
                         topic,
                         language,
@@ -701,61 +729,30 @@ if mode == "Поурочный план":
                         AI_CONFIG,
                         college=selected_college,
                         lesson_date=lesson_date,
+                        operation_id=operation_id,
                     )
                     _log_create_event(material_type, "AI generation completed", subject, topic)
                     progress.write("🎯 Формируем цели обучения...")
                     progress.write("⏱️ Распределяем этапы занятия...")
-                    if selected_lesson:
-                        saved_lesson = {"lesson_id": selected_lesson["id"], "daily_count": daily_count}
-                    else:
-                        stage = "lesson creation"
-                        _log_create_event(material_type, "lesson creation started", subject, topic)
-                        saved_lesson = SUPABASE_SERVICE.create_lesson(
-                            LessonMetadata(
-                                full_name=teacher_profile.full_name,
-                                college=teacher_profile.college,
-                                subject=subject.strip(),
-                                topic=topic.strip(),
-                                group_name=group_name.strip(),
-                                course=course,
-                                duration=lesson_duration,
-                                lesson_date=lesson_date,
-                                language=language,
-                                lesson_type=lesson_type,
-                                speciality=specialty,
-                                chair=pck,
-                            )
-                        )
-                        _log_create_event(material_type, "lesson created", subject, topic)
-                    stage = "material save"
-                    _log_create_event(material_type, "material save started", subject, topic)
-                    SUPABASE_SERVICE.upsert_material(
-                        saved_lesson["lesson_id"], "lesson_plan", _material_content(lesson)
+                    stage = "document validation and atomic save"
+                    progress.write("📄 Проверяем и подготавливаем документ...")
+                    metadata = LessonMetadata(
+                        full_name=teacher_profile.full_name, college=selected_college,
+                        subject=subject.strip(), topic=topic.strip(), group_name=group_name.strip(),
+                        course=course, duration=lesson_duration, lesson_date=lesson_date,
+                        language=language, lesson_type=lesson_type, speciality=specialty, chair=pck,
                     )
-                    _log_create_event(material_type, "material saved", subject, topic)
-                    daily_count = saved_lesson.get("daily_count", daily_count + 1)
-                    progress.write("📝 Формируем поурочный план...")
-                    lesson_fields = {
-                        "topic": topic.strip(),
-                        "subject": subject.strip(),
-                        "teacher": teacher_profile.full_name,
-                        "date": lesson_date.strftime("%d.%m.%Y"),
-                        "course": course,
-                        "group": group_name.strip(),
-                        "lesson_type": lesson_type,
-                        "language": language,
-                    }
-                    stage = "document generation"
-                    _log_create_event(material_type, "document generation started", subject, topic)
-                    progress.write("📄 Подготавливаем документ...")
-                    doc = build_doc(
-                        "План урока",
-                        lesson,
-                        template_path=college_config["template"],
-                        fields=lesson_fields,
-                        college=selected_college,
+                    pending = PendingLessonPlan(
+                        lesson, metadata, college_config["template"],
+                        existing_lesson_id=selected_lesson["id"] if selected_lesson else None,
+                        operation_id=operation_id,
                     )
+                    st.session_state["pending_lesson_plan"] = pending
+                    doc, saved_lesson = pending.save(SUPABASE_SERVICE)
+                    st.session_state.pop("pending_lesson_plan", None)
+                    daily_count = saved_lesson["daily_count"]
                     _log_create_event(material_type, "document generation completed", subject, topic)
+                    _log_create_event(material_type, "material saved", subject, topic)
                 stage = "preview"
                 _log_create_event(material_type, "preview started", subject, topic)
                 render_document_preview(
@@ -768,7 +765,7 @@ if mode == "Поурочный план":
             except DailyLimitExceeded as error:
                 _log_create_failure(material_type, stage, subject, topic, error)
                 st.error(str(error))
-            except (AIServiceError, LessonValidationError) as error:
+            except (AIServiceError, LessonValidationError, SupabaseServiceError) as error:
                 _log_create_failure(material_type, stage, subject, topic, error)
                 st.error(str(error))
             except Exception as error:

@@ -1,6 +1,7 @@
 from dataclasses import asdict
 from datetime import date
 from typing import Any, Optional
+import uuid
 
 from models.generation import LessonMetadata, TeacherProfile
 
@@ -12,6 +13,13 @@ MATERIAL_TYPES = ("lesson_plan", "lecture", "practice", "presentation")
 
 class SupabaseServiceError(RuntimeError):
     """Raised when Supabase cannot complete an application operation."""
+
+
+class DatabaseCompatibilityError(SupabaseServiceError):
+    """Storage cannot safely accept a generated lesson plan."""
+
+
+DATABASE_UPDATE_MESSAGE = 'Требуется обновление базы данных LessonAI. Генерация временно недоступна.'
 
 
 class DailyLimitExceeded(SupabaseServiceError):
@@ -263,6 +271,73 @@ class SupabaseService:
             ) from error
         if not response.data:
             raise SupabaseServiceError("Supabase не подтвердил создание занятия.")
+        return response.data[0] if isinstance(response.data, list) else response.data
+
+    def ensure_lesson_plan_storage(self, *, operation_id=None):
+        """Read-only RPC. Never probe readiness by attempting a document write."""
+        operation_id = operation_id or str(uuid.uuid4())
+        try:
+            response = self.client.rpc('lesson_plan_storage_status', {}).execute()
+        except Exception as error:
+            from services.storage_diagnostics import database_failure
+            details = database_failure(error, 'lesson_plan_storage_status', 'database_preflight', operation_id)
+            if details['reason'] == 'auth_required' or details['code'] in ('PGRST301', 'PGRST302'):
+                failed = AuthenticationError('Сессия истекла. Войдите снова.')
+            elif details['code'] in ('PGRST202', 'PGRST203', '42883', '42501'):
+                failed = DatabaseCompatibilityError(DATABASE_UPDATE_MESSAGE)
+            else:
+                failed = SupabaseServiceError('Не удалось проверить доступность базы данных. Генерация не запускалась.')
+            failed.diagnostics = details
+            raise failed from error
+        data = response.data
+        if not isinstance(data, dict) or data.get('api_version') != 2 or data.get('ready') is not True:
+            failed = DatabaseCompatibilityError(DATABASE_UPDATE_MESSAGE)
+            from services.storage_diagnostics import database_failure
+            failed.diagnostics = database_failure(failed, 'lesson_plan_storage_status', 'database_preflight', operation_id,
+                                                  data.get('reasons') if isinstance(data, dict) else None)
+            raise failed
+        return data
+
+    def save_lesson_plan(self, lesson, content, *, existing_lesson_id=None, operation_id=None):
+        """One transaction saves the plan and consumes quota only on success."""
+        if lesson.college not in ALLOWED_COLLEGES:
+            raise SupabaseServiceError("Недопустимое значение колледжа.")
+        try:
+            operation_id = str(uuid.UUID(str(operation_id))) if operation_id is not None else str(uuid.uuid4())
+            existing_lesson_id = str(uuid.UUID(str(existing_lesson_id))) if existing_lesson_id is not None else None
+        except ValueError as error:
+            raise SupabaseServiceError('Некорректный идентификатор операции сохранения.') from error
+        parameters = {
+            "p_subject": lesson.subject, "p_topic": lesson.topic,
+            "p_group_name": lesson.group_name, "p_course": lesson.course,
+            "p_duration": FIXED_LESSON_DURATION,
+            "p_lesson_date": lesson.lesson_date.isoformat(), "p_language": lesson.language,
+            "p_lesson_type": lesson.lesson_type, "p_speciality": lesson.speciality,
+            "p_chair": lesson.chair, "p_material_content": content,
+            "p_existing_lesson_id": existing_lesson_id,
+            "p_operation_id": operation_id,
+        }
+        try:
+            response = self.client.rpc("save_lesson_plan_with_daily_limit", parameters).execute()
+        except Exception as error:
+            from services.storage_diagnostics import database_failure
+            details = database_failure(error, 'save_lesson_plan_with_daily_limit', 'save', operation_id)
+            if details['reason'] == 'daily_limit_reached':
+                failed = DailyLimitExceeded(f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий.")
+            elif details['code'] in ('PGRST202', 'PGRST203', '42883', '42501'):
+                failed = DatabaseCompatibilityError(DATABASE_UPDATE_MESSAGE)
+            elif details['reason'] == 'idempotency_conflict':
+                failed = SupabaseServiceError('Содержимое операции изменилось. Создайте отдельную операцию сохранения.')
+            elif details['reason'] in ('auth_required', 'authentication_failed'):
+                failed = AuthenticationError('Сессия истекла. Войдите снова.')
+            elif details['reason'] == 'lesson_not_found':
+                failed = SupabaseServiceError('Занятие недоступно для сохранения.')
+            else:
+                failed = SupabaseServiceError('Не удалось сохранить готовый план. Материал сохранён в текущей сессии; повторите сохранение после устранения проблемы.')
+            failed.diagnostics = details
+            raise failed from error
+        if not response.data:
+            raise SupabaseServiceError("Supabase не подтвердил сохранение готового плана.")
         return response.data[0] if isinstance(response.data, list) else response.data
 
     def list_lessons(self) -> list[dict[str, Any]]:

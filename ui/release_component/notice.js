@@ -5,6 +5,7 @@
   let timer = null;
   let deadline = null;
   let closedKey = null;
+  let acknowledgedKey = null;
   function send(type, values = {}) {
     window.parent.postMessage({isStreamlitMessage: true, type, ...values}, '*');
   }
@@ -28,7 +29,7 @@
     const storageKey = 'lessonai-notice-deadline:' + currentKey;
     const saved = Number(storageGet(storageKey));
     const requested = Date.now() + Math.max(0, Number(args.remaining_seconds)) * 1000;
-    deadline = saved > 0 ? Math.min(saved, requested) : requested;
+    deadline = saved > 0 ? saved : requested;
     storageSet(storageKey, String(deadline));
     if (deadline <= Date.now()) { hide('timeout'); return; }
     document.documentElement.lang = args.language === 'kk' ? 'kk' : 'ru';
@@ -38,6 +39,10 @@
     notice.hidden = false;
     height();
     timer = setTimeout(() => hide('timeout'), deadline - Date.now());
+    if (acknowledgedKey !== currentKey) {
+      acknowledgedKey = currentKey;
+      send('streamlit:setComponentValue', {value: {notice_key: currentKey, reason: 'shown'}, dataType: 'json'});
+    }
   }
   close.addEventListener('click', () => hide('manual'));
   window.addEventListener('message', event => {

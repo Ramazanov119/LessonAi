@@ -1,0 +1,237 @@
+{
+  "goal": "Объяснить устройство iOS и применить знания при разработке",
+  "results": "Обосновывает архитектурные решения",
+  "resources": "Схема iOS, справочник SDK",
+  "evaluation_criteria": "Обосновывает архитектурные решения iOS",
+  "explanatory_illustrative_method": "Разбор схемы компонентов iOS и примеров взаимодействия приложения с системой",
+  "practical_task": "Составить схему взаимодействия компонентов iOS",
+  "interdisciplinary_connections": "Информатика",
+  "date": "28.06.2024",
+  "data": "28.06.2024",
+  "lesson_stages": [
+    {
+      "field_key": "org_steps",
+      "name": "Организационный этап",
+      "duration_minutes": 5,
+      "content": "Преподаватель проверяет готовность обучающихся."
+    },
+    {
+      "field_key": "actualization",
+      "name": "Актуализация знаний",
+      "duration_minutes": 10,
+      "content": "Перечисляет особенности iOS.",
+      "tasks": [
+        {
+          "id": "task_1",
+          "name": "Перечислить особенности iOS",
+          "instruction": "Перечисляет особенности iOS."
+        }
+      ]
+    },
+    {
+      "field_key": "theory",
+      "name": "Формирование новых знаний",
+      "duration_minutes": 20,
+      "content": "Сопоставляет компоненты ядра.",
+      "tasks": [
+        {
+          "id": "task_2",
+          "name": "Сравнить устройство ядра",
+          "instruction": "Сопоставляет компоненты ядра."
+        }
+      ]
+    },
+    {
+      "field_key": "practice",
+      "name": "Практическая работа",
+      "duration_minutes": 25,
+      "content": "Составляет схему взаимодействия компонентов.",
+      "tasks": [
+        {
+          "id": "task_3",
+          "name": "Разработать схему взаимодействия компонентов",
+          "instruction": "Составляет схему взаимодействия компонентов."
+        }
+      ]
+    },
+    {
+      "field_key": "homework",
+      "name": "Домашнее задание",
+      "duration_minutes": 3,
+      "content": "Изучить документацию жизненного цикла приложения iOS."
+    },
+    {
+      "field_key": "assessment",
+      "name": "Подведение итогов и оценивание",
+      "duration_minutes": 4,
+      "content": "Выбирает архитектурное решение.",
+      "tasks": [
+        {
+          "id": "task_4",
+          "name": "Оценить архитектурное решение",
+          "instruction": "Выбирает архитектурное решение."
+        }
+      ]
+    },
+    {
+      "field_key": "reflection",
+      "name": "Рефлексия",
+      "duration_minutes": 3,
+      "content": "Подводит итог.",
+      "tasks": [
+        {
+          "id": "task_5",
+          "name": "Сформулировать вывод",
+          "instruction": "Подводит итог."
+        }
+      ]
+    }
+  ],
+  "org_steps": "Преподаватель проверяет готовность обучающихся.",
+  "actualization": "Перечисляет особенности iOS.",
+  "theory": "Сопоставляет компоненты ядра.",
+  "practice": "Составляет схему взаимодействия компонентов.",
+  "homework": "Изучить документацию жизненного цикла приложения iOS.",
+  "assessment": "Выбирает архитектурное решение.",
+  "reflection": "Подводит итог.",
+  "assessment_items": [
+    {
+      "task_name": "Перечислить особенности iOS",
+      "stage_key": "actualization",
+      "bloom_level": "Знание",
+      "assessment_criterion": {
+        "task_id": "task_1",
+        "text": "Обосновывает ответ"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_1",
+          "text": "Аргументирует выводы с примерами",
+          "action": "Аргументирует выводы",
+          "result": "Не менее двух подтверждающих примеров",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_1",
+          "text": "Демонстрирует выполненную работу",
+          "action": "Демонстрирует выполненную работу",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_1"
+    },
+    {
+      "task_name": "Сравнить устройство ядра",
+      "stage_key": "theory",
+      "bloom_level": "Анализ",
+      "assessment_criterion": {
+        "task_id": "task_2",
+        "text": "Обосновывает ответ"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_2",
+          "text": "Аргументирует выводы с примерами",
+          "action": "Аргументирует выводы",
+          "result": "Не менее двух подтверждающих примеров",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_2",
+          "text": "Демонстрирует выполненную работу",
+          "action": "Демонстрирует выполненную работу",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_2"
+    },
+    {
+      "task_name": "Разработать схему взаимодействия компонентов",
+      "stage_key": "practice",
+      "bloom_level": "Применение",
+      "assessment_criterion": {
+        "task_id": "task_3",
+        "text": "Обосновывает ответ"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_3",
+          "text": "Аргументирует выводы с примерами",
+          "action": "Аргументирует выводы",
+          "result": "Не менее двух подтверждающих примеров",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_3",
+          "text": "Демонстрирует выполненную работу",
+          "action": "Демонстрирует выполненную работу",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_3"
+    },
+    {
+      "task_name": "Оценить архитектурное решение",
+      "stage_key": "assessment",
+      "bloom_level": "Оценивание",
+      "assessment_criterion": {
+        "task_id": "task_4",
+        "text": "Обосновывает ответ"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_4",
+          "text": "Аргументирует выводы с примерами",
+          "action": "Аргументирует выводы",
+          "result": "Не менее двух подтверждающих примеров",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_4",
+          "text": "Демонстрирует выполненную работу",
+          "action": "Демонстрирует выполненную работу",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_4"
+    },
+    {
+      "task_name": "Сформулировать вывод",
+      "stage_key": "reflection",
+      "bloom_level": "Создание",
+      "assessment_criterion": {
+        "task_id": "task_5",
+        "text": "Обосновывает ответ"
+      },
+      "descriptors": [
+        {
+          "task_id": "task_5",
+          "text": "Аргументирует выводы с примерами",
+          "action": "Аргументирует выводы",
+          "result": "Не менее двух подтверждающих примеров",
+          "requires_result": true,
+          "points": 10
+        },
+        {
+          "task_id": "task_5",
+          "text": "Демонстрирует выполненную работу",
+          "action": "Демонстрирует выполненную работу",
+          "points": 10
+        }
+      ],
+      "points": 20,
+      "task_id": "task_5"
+    }
+  ],
+  "fixture_provenance": "Synthetic regression from user-reported failure; not a captured provider response",
+  "subject": "Мобильная разработка",
+  "topic": "Операционная система iOS"
+}

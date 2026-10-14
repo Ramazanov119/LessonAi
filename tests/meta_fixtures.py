@@ -60,4 +60,8 @@ def meta_plan(language="Русский", lesson_type="Лекция"):
          "descriptors": [{"text": text, "points": 10} for text in descriptors], "points": 20}
         for task,key,level,criterion,descriptors in zip(tasks,keys,levels,criteria,descriptor_pairs)
     ]
+    for index, item in enumerate(payload['assessment_items'], 1):
+        item['task_id'] = f'task_{index}'
+        stage = next(s for s in payload['lesson_stages'] if s['field_key'] == item['stage_key'])
+        stage['tasks'] = [{'id': item['task_id'], 'name': item['task_name'], 'instruction': stage['content']}]
     return payload

@@ -181,12 +181,15 @@ def _practice_body(data):
 
 
 def _meta_lesson_body(data, metadata):
-    from services.lesson_validation import normalize_meta_lesson
+    from services.lesson_validation import normalize_meta_lesson, validate_meta_lesson
     from services.meta_localization import meta_labels
     language = metadata.get("language", "Русский")
-    data = normalize_meta_lesson(data, language=language,
-                                 lesson_type=metadata.get("lesson_type", ""),
-                                 lesson_date=metadata.get("date"))
+    if data.get('meta_schema_version') == 1:
+        validate_meta_lesson(data, language=language)
+    else:
+        data = normalize_meta_lesson(data, language=language,
+                                    lesson_type=metadata.get("lesson_type", ""),
+                                    lesson_date=metadata.get("date"))
     labels = meta_labels(language)
     blocks = [f"<h1>{labels['duration']}: {data['lesson_duration']} {labels['minute']}</h1>"]
     for title, key in ((labels['goal'], "goal"), (labels['results'], "results")):

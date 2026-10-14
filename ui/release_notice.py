@@ -7,7 +7,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 from config.releases import CURRENT_RELEASE
-from services.release_notice import prepare_notice, dismiss_notice, close_notices_on_navigation
+from services.release_notice import prepare_notice, dismiss_notice, close_notices_on_navigation, start_notice_timer
 from services.supabase_service import SupabaseServiceError
 
 _component = components.declare_component('lessonai_release_notice', path=str(Path(__file__).with_name('release_component')))
@@ -29,6 +29,8 @@ def render_release_notice(service, page, release=None):
     if args is None:
         return
     result = _component(**args, key='release_notice:' + args['notice_key'], default=None)
+    if isinstance(result, dict) and result.get('notice_key') == args['notice_key'] and result.get('reason') == 'shown':
+        start_notice_timer(st.session_state, args['notice_key'], time.monotonic())
     if isinstance(result, dict) and result.get('notice_key') == args['notice_key'] and result.get('reason') in ('manual', 'timeout', 'closed'):
         dismiss_notice(st.session_state, args['notice_key'])
         # One finite rerun removes the iframe after dismissal; no generation is called.

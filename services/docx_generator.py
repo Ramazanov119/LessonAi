@@ -412,10 +412,14 @@ def build_doc(
         formatted_date = lesson_date_value(selected_date).strftime("%d.%m.%Y")
         is_meta = str(college or "").upper() == "META" or Path(template_path).resolve() == get_college_config("META")["template"].resolve()
         if is_meta:
-            template_fields = normalize_meta_lesson(
-                content, language=metadata.get("language", "Русский"),
-                lesson_type=metadata.get("lesson_type", ""), lesson_date=selected_date,
-            )
+            if template_fields.get('meta_schema_version') == 1:
+                from services.lesson_validation import validate_meta_lesson
+                validate_meta_lesson(template_fields, language=metadata.get('language', 'Русский'))
+            else:
+                template_fields = normalize_meta_lesson(
+                    content, language=metadata.get("language", "Русский"),
+                    lesson_type=metadata.get("lesson_type", ""), lesson_date=selected_date,
+                )
             fill_meta_tables(doc, template_fields, metadata.get("language", "Русский"))
 
         is_q = str(college or "").upper() == "Q" or Path(template_path).resolve() == get_college_config("Q")["template"].resolve()

@@ -2,6 +2,7 @@
 import copy
 import json
 import re
+import uuid
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
@@ -9,7 +10,11 @@ from config.colleges import get_college_config
 
 
 class LessonValidationError(ValueError):
-    pass
+    def __init__(self, message, *, code="invalid_lesson", task_id=None, phase="normalization"):
+        super().__init__(message)
+        self.code = code
+        self.task_id = task_id
+        self.phase = phase
 
 
 META_STAGE_KEYS = (
@@ -103,29 +108,54 @@ def _text(value, label):
     return value.strip()
 
 
-# A conservative topical check complements exact task/stage references. It does
-# not attempt to prove pedagogical correctness or replace instructor review.
-_COMMON_WORDS = """задание задания выполняет выполнение студент студенты обучающийся
-обучающиеся определяет объясняет правильно корректно показывает демонстрирует
-понимание понимает анализирует использует применяет называет формулирует
-тапсырма тапсырманы орындайды білім алушылар анықтайды түсіндіреді дұрыс
-қолданады көрсетеді талдайды жазады студенттер
-student students task tasks completes identifies explains correctly demonstrates
-understands analyzes uses applies describes defines"""
-_COMMON_STEMS = {word[:4] for word in _COMMON_WORDS.split()}
+def _belongs_to_task(value, task_id, label):
+    reference = value.get('task_id')
+    if reference is not None and str(reference).strip() != task_id:
+        raise LessonValidationError(f"{label} ссылается на другое задание: {task_id}.",
+                                    code="assessment_reference_mismatch", task_id=task_id)
 
 
-def _topic_stems(text):
-    return {word[:4] for word in re.findall(r"[^\W\d_]+", text.casefold())
-            if len(word) >= 4 and word[:4] not in _COMMON_STEMS}
+def _descriptor(value, task_id):
+    """Validate observable-action fields, not word overlap or semantic similarity."""
+    if isinstance(value, str):
+        # Preserve existing descriptions; the full sentence is an action statement.
+        text = _text(value, 'Дескриптор')
+        value = {'task_id': task_id, 'text': text, 'action': text}
+    if not isinstance(value, dict):
+        raise LessonValidationError('Дескриптор должен быть строкой или объектом.',
+                                    code="invalid_descriptor", task_id=task_id)
+    _belongs_to_task(value, task_id, 'Дескриптор')
+    action = value.get('action', value.get('text'))
+    if not isinstance(action, str) or not action.strip():
+        raise LessonValidationError('У дескриптора не указано наблюдаемое действие.',
+                                    code="missing_observable_action", task_id=task_id)
+    if 'requires_result' in value and type(value['requires_result']) is not bool:
+        raise LessonValidationError('Признак измеримого результата должен быть логическим значением.', code='invalid_descriptor_result_flag', task_id=task_id)
+    result = value.get('result')
+    if result is not None and (not isinstance(result, str) or not result.strip()):
+        raise LessonValidationError('Некорректный наблюдаемый результат дескриптора.',
+                                    code="invalid_descriptor_result", task_id=task_id)
+    if value.get('requires_result') is True and not result:
+        raise LessonValidationError('У измеримого дескриптора не указан результат.',
+                                    code="missing_descriptor_result", task_id=task_id)
+    text = value.get('text')
+    if text is None:
+        text = action.strip() + (': ' + result.strip() if result else '')
+    text = _text(text, 'Дескриптор')
+    if re.search(r"\d+\s*(?:балл|ұпай|points?)", text, re.I):
+        raise LessonValidationError('Баллы дескрипторов должны храниться отдельно от текста.',
+                                    code="embedded_descriptor_points", task_id=task_id)
+    detail = {'task_id': task_id, 'text': text, 'action': action.strip()}
+    if result:
+        detail['result'] = result.strip()
+    if 'requires_result' in value:
+        detail['requires_result'] = value['requires_result']
+    from services.meta_scores import weight
+    score = weight(value['points'], task_id=task_id) if 'points' in value else None
+    return detail, score
 
 
-def _check_relevance(text, context, label):
-    if not (_topic_stems(text) & _topic_stems(context)):
-        raise LessonValidationError(f"{label} не содержит терминов задания и его этапа: {text}")
-
-
-def normalize_meta_lesson(content, *, language="Русский", lesson_type="", lesson_date=None):
+def _normalize_meta_lesson(content, *, language="Русский", lesson_type="", lesson_date=None, context):
     payload = parse_lesson(content)
     duration = get_college_config("META")["lesson_duration"]
     lang = language_code(language)
@@ -158,6 +188,8 @@ def normalize_meta_lesson(content, *, language="Русский", lesson_type="",
         stage["name"] = _text(stage.get("name"), "Название этапа")
         stage["content"] = _text(stage.get("content"), "Содержание этапа")
         _integer(stage.get("duration_minutes"), "Продолжительность этапа")
+    from services.meta_tasks import declared_tasks, resolve_assessment_task
+    registry = declared_tasks(stages)
     minutes = [stage["duration_minutes"] for stage in stages]
     if sum(minutes) != duration or min(minutes) < 1:
         minutes = _allocate(minutes, duration, minimum=1)
@@ -176,48 +208,137 @@ def normalize_meta_lesson(content, *, language="Русский", lesson_type="",
     for item in items:
         if not isinstance(item, dict):
             raise LessonValidationError("Некорректная строка оценивания.")
-        task = _text(item.get("task_name"), "Задание")
-        key = item.get("stage_key")
-        candidates = [s for s in stages if key is None or s["field_key"] == key]
-        linked = next((s for s in candidates if task.casefold() in s["content"].casefold()), None)
-        if linked is None or task.casefold() in assessed:
-            raise LessonValidationError(f"Задание отсутствует в этапе урока или повторяется: {task}")
-        assessed.add(task.casefold())
+        context["task_id"] = item.get("task_id")
+        linked, task = resolve_assessment_task(item, stages, registry)
+        task_id = task['id']
+        context['task_id'] = task_id
+        if task_id in assessed:
+            raise LessonValidationError(f"Задание оценено повторно: {task_id}.", code="duplicate_assessment", task_id=task_id)
+        assessed.add(task_id)
+        item["task_id"] = task_id
         item["stage_key"] = linked["field_key"]
-        item["task_name"] = task
-        item["assessment_criterion"] = _text(item.get("assessment_criterion"), "Критерий оценивания")
-        _check_relevance(item["assessment_criterion"], linked["content"], "Критерий")
+        item["task_name"] = task['name']
+        criterion = item.get("assessment_criterion")
+        if isinstance(criterion, dict):
+            _belongs_to_task(criterion, task_id, 'Критерий')
+            criterion = criterion.get('text')
+        item["assessment_criterion"] = _text(criterion, "Критерий оценивания")
         level = _text(item.get("bloom_level"), "Уровень Блума")
         if level.casefold() not in {x.casefold() for x in BLOOM_LEVELS[lang]}:
             raise LessonValidationError("Уровень Блума должен соответствовать языку занятия.")
         descriptors = item.get("descriptors")
         if not isinstance(descriptors, list) or not descriptors:
             raise LessonValidationError("Не заполнены дескрипторы.")
-        texts, scores = [], []
-        for descriptor in descriptors:
-            if isinstance(descriptor, dict):
-                texts.append(_text(descriptor.get("text"), "Дескриптор"))
-                scores.append(_integer(descriptor.get("points"), "Балл дескриптора"))
-            else:
-                texts.append(_text(descriptor, "Дескриптор"))
-                scores.append(1)
-            _check_relevance(texts[-1], linked["content"], "Дескриптор")
-            if re.search(r"\d+\s*(?:балл|ұпай|points?)", texts[-1], re.I):
-                raise LessonValidationError("Баллы дескрипторов должны храниться отдельно от текста.")
-        item["descriptors"] = texts
-        existing_scores = item.get("descriptor_points", scores)
-        if not isinstance(existing_scores, list) or len(existing_scores) != len(texts):
-            raise LessonValidationError("Баллы дескрипторов не соответствуют дескрипторам.")
-        item["descriptor_points"] = [_integer(x, "Балл дескриптора") for x in existing_scores]
-        _integer(item.get("points"), "Максимальный балл задания")
-    points = [item["points"] for item in items]
-    if sum(points) != 100:
-        points = _allocate(points, 100)
-    for item, value in zip(items, points):
-        item["points"] = value
-        scores = item["descriptor_points"]
-        if sum(scores) != value:
-            item["descriptor_points"] = _allocate(scores, value)
+        details = item.get('descriptor_details')
+        # Normalized stored plans retain explicit actions/results and references.
+        if details is not None:
+            if not isinstance(details, list) or len(details) != len(descriptors):
+                raise LessonValidationError('Структура дескрипторов не соответствует текстам.', code="descriptor_structure_mismatch", task_id=task_id)
+            for detail, text in zip(details, descriptors):
+                if not isinstance(detail, dict) or detail.get('text') != text:
+                    raise LessonValidationError('Текст дескриптора противоречит его структуре.', code="descriptor_structure_mismatch", task_id=task_id)
+            descriptors = details
+        normalized = [_descriptor(value, task_id) for value in descriptors]
+        item['descriptors'] = [detail['text'] for detail, _ in normalized]
+        item['descriptor_details'] = [detail for detail, _ in normalized]
+        item['_descriptor_weights'] = [score for _, score in normalized]
+    from services.meta_scores import normalize_assessment_points
+    context['task_id'] = None
+    normalize_assessment_points(items, lang)
+    context['task_id'] = None
+    declared_tasks(stages)
+    for stage in stages:
+        payload[stage['field_key']] = stage['content']
+    payload['evaluation_criteria'] = '\n'.join(dict.fromkeys(item['assessment_criterion'] for item in items))
     selected_date = lesson_date_value(lesson_date)
     payload.update(date=selected_date.isoformat(), data=selected_date.isoformat(), lesson_date=selected_date.isoformat())
+    payload['meta_schema_version'] = 1
+    payload['meta_attempt_id'] = uuid.uuid4().hex
+    validate_meta_lesson(payload, language=language)
+    return payload
+
+
+def normalize_meta_lesson(content, *, language="Русский", lesson_type="", lesson_date=None):
+    payload = parse_lesson(content)
+    if payload.get('meta_schema_version') == 1:
+        validate_meta_lesson(payload, language=language)
+        selected = lesson_date_value(lesson_date if lesson_date is not None else payload.get('lesson_date'))
+        payload.update(date=selected.isoformat(), data=selected.isoformat(), lesson_date=selected.isoformat())
+        return payload
+    context = {}
+    try:
+        return _normalize_meta_lesson(content, language=language, lesson_type=lesson_type,
+                                      lesson_date=lesson_date, context=context)
+    except LessonValidationError as error:
+        if error.task_id is None:
+            error.task_id = context.get('task_id')
+        raise
+
+
+def validate_meta_lesson(payload, *, language='Русский'):
+    """Final, read-only check of the canonical model; never reallocates scores."""
+    from services.meta_tasks import declared_tasks, resolve_assessment_task
+    stages = payload.get('lesson_stages')
+    if not isinstance(stages, list) or not stages or any(not isinstance(s, dict) for s in stages):
+        raise LessonValidationError('Не заполнены этапы META.', code='invalid_stages')
+    keys = [s.get('field_key') for s in stages]
+    if any(key not in META_STAGE_KEYS for key in keys) or len(set(keys)) != len(keys):
+        raise LessonValidationError('Этапы META должны иметь уникальные известные ключи.', code='invalid_stages')
+    for stage in stages:
+        _text(stage.get('name'), 'Название этапа')
+        _text(stage.get('content'), 'Содержание этапа')
+        tasks = stage.get('tasks')
+        if not isinstance(tasks, list):
+            raise LessonValidationError('Некорректная каноническая структура заданий.', code='invalid_task_structure')
+        for task in tasks:
+            if not isinstance(task, dict) or not isinstance(task.get('id'), str) or not task['id'].strip() or task['id'] != task['id'].strip():
+                raise LessonValidationError('У задания отсутствует канонический task_id.', code='invalid_task_structure')
+            _text(task.get('name'), 'Название задания')
+            _text(task.get('instruction'), 'Инструкция задания')
+        if payload.get(stage['field_key']) != stage['content']:
+            raise LessonValidationError('Содержание этапа противоречит канонической модели.', code='stage_content_mismatch')
+        if _integer(stage.get('duration_minutes'), 'Время этапа') < 1:
+            raise LessonValidationError('Этап должен длиться хотя бы минуту.', code='invalid_duration')
+    if sum(s['duration_minutes'] for s in stages) != 70 or payload.get('lesson_duration') != 70:
+        raise LessonValidationError('Сумма времени META должна быть 70 минут.', code='duration_total')
+    source_copy = copy.deepcopy(stages)
+    registry = declared_tasks(source_copy)
+    if any(original['content'] != normalized['content'] for original, normalized in zip(stages, source_copy)):
+        raise LessonValidationError('Задание не включено в содержимое канонического этапа.', code='stage_task_content_mismatch')
+    items = payload.get('assessment_items')
+    if not isinstance(items, list) or not items:
+        raise LessonValidationError('Не заполнено оценивание.', code='missing_assessment')
+    seen = set()
+    for item in items:
+        if not isinstance(item, dict):
+            raise LessonValidationError('Некорректное оценивание.', code='invalid_assessment')
+        stage, task = resolve_assessment_task(item, stages, registry)
+        reference = task['id']
+        if reference in seen:
+            raise LessonValidationError('Задание оценено повторно.', code='duplicate_assessment', task_id=reference)
+        seen.add(reference)
+        if item.get('task_id') != reference or item.get('stage_key') != stage['field_key'] or item.get('task_name') != task['name']:
+            raise LessonValidationError('Каноническая ссылка задания противоречива.', code='assessment_reference_mismatch', task_id=reference)
+        _text(item.get('assessment_criterion'), 'Критерий оценивания')
+        level = item.get('bloom_level')
+        if not isinstance(level, str) or level.casefold() not in {v.casefold() for v in BLOOM_LEVELS[language_code(language)]}:
+            raise LessonValidationError('Некорректный уровень Блума.', task_id=reference)
+        descriptors, details, points = item.get('descriptors'), item.get('descriptor_details'), item.get('descriptor_points')
+        if not isinstance(descriptors, list) or not descriptors or not isinstance(details, list) or len(details) != len(descriptors):
+            raise LessonValidationError('Несогласованная структура дескрипторов.', code='descriptor_structure_mismatch', task_id=reference)
+        for text, detail in zip(descriptors, details):
+            if not isinstance(detail, dict) or detail.get('text') != text:
+                raise LessonValidationError('Тексты дескрипторов противоречат структуре.', code='descriptor_structure_mismatch', task_id=reference)
+            _descriptor(detail, reference)
+        maximum = _integer(item.get('points'), 'Баллы задания')
+        low, high = item.get('points_min', 1), item.get('points_max', 100)
+        if type(low) is not int or type(high) is not int or low < 0 or high < low or maximum < 1 or not low <= maximum <= high:
+            raise LessonValidationError('Баллы задания вне границ.', code='impossible_score_allocation', task_id=reference)
+        if not isinstance(points, list) or len(points) != len(descriptors) or sum(_integer(p, 'Баллы дескриптора') for p in points) != maximum:
+            raise LessonValidationError('Сумма баллов дескрипторов не равна баллу задания.', code='descriptor_points_total', task_id=reference)
+    total = sum(item['points'] for item in items)
+    if total != 100:
+        raise LessonValidationError(f'Сумма баллов META: {total}; требуется 100. Баллы заданий: {[i["points"] for i in items]}.', code='assessment_points_total')
+    if payload.get('evaluation_criteria') != '\n'.join(dict.fromkeys(item['assessment_criterion'] for item in items)):
+        raise LessonValidationError('Критерии шаблона противоречат таблице оценивания.', code='criteria_structure_mismatch')
     return payload

@@ -582,26 +582,35 @@ interdisciplinary_connections должны быть заполнены коро�
 Дополнительная структура для META College, продолжительность {lesson_duration} минут.
 Кроме существующих строковых полей добавь:
 lesson_duration: {lesson_duration},
-lesson_stages: массив объектов с field_key, name, duration_minutes (целое > 0), content.
+lesson_stages: массив объектов с field_key, name, duration_minutes (целое > 0), content, tasks.
+tasks — массив реальных заданий этого этапа: {{"id": "task_1", "name": "задание", "instruction": "действия студентов"}}.
+id уникален во всём уроке; содержание и инструкции согласованы. Для этапа без заданий tasks = [].
 field_key по порядку: org_steps, actualization, theory, practice, homework, assessment, reflection.
 name и content — на языке {language}. content совпадает с соответствующим строковым полем.
 Распредели время по типу занятия {lesson_type}; для практики/лабораторной выдели больше времени
 на самостоятельную работу, для лекции — на объяснение. Сумма ровно {lesson_duration}.
 Не указывай время внутри name/content; минуты хранятся только в duration_minutes.
-assessment_items: массив объектов с task_name, stage_key, bloom_level,
-assessment_criterion, descriptors, points (целое >= 0).
+assessment_items: массив объектов с task_id, task_name, stage_key, bloom_level,
+assessment_criterion, descriptors, points (необязательный положительный числовой относительный вес).
 stage_key — field_key этапа, в котором студенты выполняют задание.
-task_name дословно присутствует в content этого этапа; каждое оцениваемое задание уникально.
+task_id точно ссылается на id существующего задания в tasks этапа; каждое задание оценивается один раз.
+task_name — название задания для таблицы, его не нужно дословно копировать в описание content.
+Не добавляй в оценивание задания, которых нет в tasks соответствующего этапа.
 Уровни Блума на выбранном языке: {levels}.
-Дескрипторы — массив объектов {{"text": "наблюдаемое действие", "points": 5}}.
-Не вписывай баллы внутрь text; сумма баллов дескрипторов равна points задания.
-Общая сумма points всех заданий ровно 100. Не копируй образец универсальных заданий.
+Дескрипторы — массив объектов {{"task_id": "task_1", "text": "Аргументирует выводы с примерами", "action": "Аргументирует выводы", "result": "Примеры в обосновании", "points": 5}}; все тексты переведи на выбранный язык.
+Не вписывай баллы внутрь text. points дескрипторов — положительные относительные веса внутри задания; Python рассчитывает итоговые баллы.
+Предлагай веса согласно значимости заданий; точную сумму 100 обеспечивает Python. Не копируй образец универсальных заданий.
 Подбирай конкретные задания, критерии и дескрипторы по теме, целям, результатам,
 теоретическому материалу, практике и деятельности обучающихся в данном плане.
 Критерий должен измерять выполнение именно этого задания, дескрипторы раскрывают критерий.
-В content этапа подробно опиши действия и предметы оценки (например адрес отправителя и ссылку).
-Каждый критерий и дескриптор должен содержать конкретные предметные термины из content своего этапа,
-используй одинаковую терминологию, чтобы связь проверялась программно.
+Не требуй повторения слов темы или задания в критериях и дескрипторах.
+Критерий и каждый дескриптор относятся к task_id своей строки оценивания.
+Дескрипторы — объекты с task_id, text, action (наблюдаемое действие),
+result (при необходимости измеримый результат) и points.
+Допустимы перефразировки, например «Аргументирует выводы с примерами».
+Не используй субъективные качества и непроверяемое «понимает» вместо наблюдаемого действия.
+Текст, action и result должны быть согласованы; result обязателен, если requires_result=true.
+Математическое распределение баллов и времени выполняет приложение после ответа; не добавляй meta_schema_version или технические поля приложения.
 Все значения, включая заголовки, уровни Блума, дескрипторы, названия и описание методов
 (explanatory_illustrative_method) и практических заданий (practical_task) — на языке {language}.
 """
@@ -619,11 +628,24 @@ task_name дословно присутствует в content этого эта
     system += "\nДату не придумывай: поля date/data не генерируй, дата подставляется приложением."
     generated = openai_generate(prompt, system, config)
     if str(college or "").upper() == "META":
+        import uuid
+        from services.meta_diagnostics import record_meta_response
+        attempt_id = uuid.uuid4().hex
+        record_meta_response(generated, 'ai_raw', attempt_id)
         try:
-            payload = normalize_meta_lesson(generated, language=language, lesson_type=lesson_type,
+            from services.lesson_validation import parse_lesson
+            raw = parse_lesson(generated)
+            raw.pop('meta_schema_version', None)
+            raw.pop('meta_attempt_id', None)
+            payload = normalize_meta_lesson(raw, language=language, lesson_type=lesson_type,
                                             lesson_date=lesson_date)
         except ValueError as error:
+            from services.meta_diagnostics import record_meta_failure
+            record_meta_failure(generated, error, "normalization")
+            record_meta_response(generated, 'normalization_failed', attempt_id, error)
             raise AIServiceError(str(error)) from error
+        payload['meta_attempt_id'] = attempt_id
+        record_meta_response(payload, 'normalized', attempt_id)
         return json.dumps(payload, ensure_ascii=False)
     # Keep the existing return type while removing AI dates from the saved plan.
     from services.lesson_validation import parse_lesson
