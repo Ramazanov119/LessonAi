@@ -548,7 +548,14 @@ if not auth_session:
     st.stop()
 
 try:
-    PLATFORM_ACCESS = PlatformAccess(SUPABASE_SERVICE.client)
+    service_role_key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY")
+    generation_log_client = (
+        create_supabase_client(SUPABASE_URL, service_role_key)
+        if service_role_key else None
+    )
+    PLATFORM_ACCESS = PlatformAccess(
+        SUPABASE_SERVICE.client, log_client=generation_log_client
+    )
     access_profile = PLATFORM_ACCESS.profile()
     if not access_profile['allowed']:
         st.error(ACCESS_DENIED)

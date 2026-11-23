@@ -1,14 +1,19 @@
 """Uncached access checks against the shared AiEdu profile and generation log."""
+import logging
 from datetime import datetime, timedelta, timezone
 
 from services.supabase_service import SupabaseServiceError
+
+logger = logging.getLogger(__name__)
 
 ACCESS_DENIED = 'Доступ к платформе приостановлен или срок подписки истёк. Обратитесь к администратору.'
 
 
 class PlatformAccess:
-    def __init__(self, client):
+    def __init__(self, client, *, log_client=None):
         self.client = client
+        # Keep the service client separate: never attach the user's JWT to it.
+        self.log_client = log_client if log_client is not None else client
 
     def profile(self):
         try:
@@ -50,8 +55,21 @@ class PlatformAccess:
         except Exception as error:
             raise SupabaseServiceError('Не удалось проверить дневной лимит. Генерация не запускалась.') from error
 
-    def record_success(self, user_id):
+    def record_success(self, user_id, *, agent_type=None, action_type=None,
+                       model_name=None, duration_ms=0):
+        if type(duration_ms) is not int or duration_ms < 0:
+            raise ValueError('duration_ms must be a non-negative integer')
+        payload = {
+            'user_id': user_id,
+            'agent_type': agent_type or 'lesson_plan',
+            'action_type': action_type or 'generate',
+            'status': 'success',
+            'model_name': model_name or 'unknown',
+            'duration_ms': duration_ms,
+        }
         try:
-            self.client.table('generation_logs').insert({'user_id': user_id}).execute()
+            self.log_client.table('generation_logs').insert(payload).execute()
         except Exception as error:
+            logger.exception('generation_logs insert failed: user_id=%s agent_type=%s action_type=%s model_name=%s error=%s',
+                             user_id, payload['agent_type'], payload['action_type'], payload['model_name'], error)
             raise SupabaseServiceError('Материал создан, но не удалось записать генерацию. Обратитесь к администратору.') from error

@@ -49,7 +49,44 @@ class PlatformAccessTests(unittest.TestCase):
         client.table.return_value.select.return_value.eq.assert_called_with('user_id', 'teacher-id')
         self.assertTrue(query.gte.call_args.args[1].endswith('T00:00:00+00:00'))
         service.record_success('teacher-id')
-        client.table.return_value.insert.assert_called_once_with({'user_id': 'teacher-id'})
+        client.table.return_value.insert.assert_called_once_with({
+            'user_id': 'teacher-id', 'agent_type': 'lesson_plan', 'action_type': 'generate',
+            'status': 'success', 'model_name': 'unknown', 'duration_ms': 0,
+        })
+
+
+    def test_service_client_used_only_for_writing_log(self):
+        service, user_client = self.service()
+        log_client = Mock()
+        service = PlatformAccess(user_client, log_client=log_client)
+        self.assertTrue(service.profile()['allowed'])
+        service.record_success('teacher-id', agent_type='lecture', action_type='rework',
+                               model_name='test-model', duration_ms=1250)
+        log_client.table.assert_called_once_with('generation_logs')
+        log_client.table.return_value.insert.assert_called_once_with({
+            'user_id': 'teacher-id', 'agent_type': 'lecture', 'action_type': 'rework',
+            'status': 'success', 'model_name': 'test-model', 'duration_ms': 1250,
+        })
+        user_client.table.return_value.insert.assert_not_called()
+        log_client.auth.set_session.assert_not_called()
+
+    def test_invalid_duration_is_rejected_before_insert(self):
+        for duration in (-1, 1.5, True, None):
+            with self.subTest(duration=duration):
+                service, client = self.service()
+                with self.assertRaises(ValueError):
+                    service.record_success('teacher-id', duration_ms=duration)
+                client.table.return_value.insert.assert_not_called()
+
+    def test_insert_failure_logs_exact_database_error(self):
+        service, client = self.service()
+        message = '23502: null value in column action_type violates not-null constraint'
+        client.table.return_value.insert.return_value.execute.side_effect = RuntimeError(message)
+        with self.assertLogs('services.platform_access', level='ERROR') as logs:
+            with self.assertRaises(SupabaseServiceError) as raised:
+                service.record_success('teacher-id')
+        self.assertIn(message, '\n'.join(logs.output))
+        self.assertNotIn(message, str(raised.exception))
 
 
 class GenerationGuardTests(unittest.TestCase):
