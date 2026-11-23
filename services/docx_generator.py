@@ -422,6 +422,10 @@ def build_doc(
                 )
             fill_meta_tables(doc, template_fields, metadata.get("language", "Русский"))
 
+        if str(college or "").upper() == "ETEC" or Path(template_path).resolve() == get_college_config("ETEC")["template"].resolve():
+            from services.etec_lesson import fill_etec_timing
+            fill_etec_timing(doc)
+
         is_q = str(college or "").upper() == "Q" or Path(template_path).resolve() == get_college_config("Q")["template"].resolve()
         q_fields = q_template_fields(template_fields, metadata.get("language", "Русский")) if is_q else {}
         if is_q:

@@ -20,7 +20,7 @@ COLLEGES = {
             "07161300-Автомобиль көлігіне техникалық қызмет көрсету және пайдалану",
         ],
         "pck_chairs": ["Аманғали М.", "Серік А.М.", "Беккужаев Т.Т"],
-        "lesson_duration": 70
+        "lesson_duration": 90
     },
     "META": {
         "logo": PROJECT_ROOT / "assets" / "logos" / "meta.png",

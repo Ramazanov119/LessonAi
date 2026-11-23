@@ -653,7 +653,7 @@ mode = st.radio(
 college_config = get_college_config(teacher_profile.college)
 selected_college = selected_lesson["college"] if selected_lesson else teacher_profile.college
 college_config = get_college_config(selected_college)
-lesson_duration = college_config["lesson_duration"] if selected_college == "META" else (selected_lesson.get("duration") if selected_lesson else college_config.get("lesson_duration"))
+lesson_duration = college_config["lesson_duration"] if selected_college in ("META", "ETEC") else (selected_lesson.get("duration") if selected_lesson else college_config.get("lesson_duration"))
 selected_specialty = selected_lesson.get("speciality", "Не указано") if selected_lesson else None
 selected_chair = selected_lesson.get("chair", "Не указано") if selected_lesson else None
 specialties = college_config["specialties"] or ["Не указано"]

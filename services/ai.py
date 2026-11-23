@@ -232,9 +232,9 @@ def create_lesson(
     college=None,
     lesson_date=None,
 ):
-    if str(college or "").upper() == "META":
+    if str(college or "").upper() in ("META", "ETEC"):
         from config.colleges import get_college_config
-        lesson_duration = get_college_config("META")["lesson_duration"]
+        lesson_duration = get_college_config(college)["lesson_duration"]
     system = """
 Ты опытный методист колледжа Казахстана, специализирующийся на разработке
 учебных занятий для системы ТиПО.
@@ -625,6 +625,15 @@ result (при необходимости измеримый результат)
 Поле полностью на языке {language}. Это дополнительный элемент шаблона Q,
 не утверждай его обязательность по приказу № 130.
 """
+    if str(college or "").upper() == "ETEC":
+        prompt += """
+Для ЕТЭК строго соблюдай расписание шаблона (всего 90 минут):
+организационный этап — 3; новые знания — 20; применение — 15;
+анализ — 30; оценивание и подведение итогов — 10; рефлексия — 10;
+домашнее задание — 2 минуты. Содержание и объём заданий должны
+соответствовать этим интервалам. time1–time7: 3, 20, 15, 30, 10, 10, 2.
+Актуализацию и целеполагание включи в перечисленные этапы без добавления времени.
+"""
     system += "\nДату не придумывай: поля date/data не генерируй, дата подставляется приложением."
     generated = openai_generate(prompt, system, config)
     if str(college or "").upper() == "META":
@@ -650,6 +659,10 @@ result (при необходимости измеримый результат)
     # Keep the existing return type while removing AI dates from the saved plan.
     from services.lesson_validation import parse_lesson
     payload = parse_lesson(generated)
+    if str(college or "").upper() == "ETEC":
+        from services.etec_lesson import ETEC_STAGE_MINUTES
+        payload.update({f'time{i}': minutes for i, minutes in enumerate(ETEC_STAGE_MINUTES, 1)})
+        payload['lesson_duration'] = 90
     if str(college or "").upper() == "Q":
         from services.q_docx import q_connections
         try:
