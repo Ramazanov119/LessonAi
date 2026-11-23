@@ -30,7 +30,6 @@ from services.presenton_service import PresentonClient
 from services.preview_renderer import generation_status, render_document_preview
 from services.supabase_service import (
     ALLOWED_COLLEGES,
-    DAILY_LESSON_LIMIT,
     AuthenticationError,
     DailyLimitExceeded,
     FIXED_LESSON_DURATION,
@@ -38,6 +37,9 @@ from services.supabase_service import (
     SupabaseServiceError,
     create_supabase_client,
 )
+from services.platform_access import PlatformAccess, ACCESS_DENIED
+from services.subscription_service import SubscriptionService
+from ui.subscriptions import render_admin, render_subscription_status
 from ui.release_notice import render_release_notice
 from ui.theme import apply_theme
 
@@ -105,7 +107,7 @@ LANGUAGE_CODES = {
 
 
 def _store_session(session):
-    st.session_state.pop("pending_lesson_plan", None)
+    st.session_state.clear()
     st.session_state["current_page"] = "Главная"
     st.session_state["auth_session"] = {
         "access_token": session.access_token,
@@ -221,12 +223,12 @@ def _log_create_failure(material_type, stage, subject, topic, error):
                  material_type, stage, details['phase'], details['error_type'], details['code'], details['task_token'])
 
 
-def _render_brand_header(*, daily_count=None, college=None):
+def _render_brand_header(*, daily_count=None, college=None, daily_limit=20):
     quota_class = ""
 
-    if daily_count == DAILY_LESSON_LIMIT:
+    if daily_count == daily_limit:
         quota_class = "danger"
-    elif daily_count is not None and daily_count >= 6:
+    elif daily_count is not None and daily_count >= daily_limit * 0.75:
         quota_class = "warning"
 
     quota = ""
@@ -234,7 +236,7 @@ def _render_brand_header(*, daily_count=None, college=None):
     if daily_count is not None:
         quota = (
             f"<span class='ai-edu-quota {quota_class}'>Сегодня "
-            f"<strong>{daily_count}/{DAILY_LESSON_LIMIT}</strong></span>"
+            f"<strong>{daily_count}/{daily_limit}</strong></span>"
         )
 
     logo = None
@@ -530,11 +532,15 @@ if SUPABASE_SERVICE is None:
 auth_session = st.session_state.get("auth_session")
 if auth_session:
     try:
-        SUPABASE_SERVICE.restore_session(
+        restored_session = SUPABASE_SERVICE.restore_session(
             auth_session["access_token"], auth_session["refresh_token"]
         )
+        st.session_state["auth_session"] = {
+            "access_token": restored_session.access_token,
+            "refresh_token": restored_session.refresh_token,
+        }
     except AuthenticationError:
-        st.session_state.pop("auth_session", None)
+        st.session_state.clear()
         auth_session = None
 
 if not auth_session:
@@ -542,13 +548,19 @@ if not auth_session:
     st.stop()
 
 try:
+    PLATFORM_ACCESS = PlatformAccess(SUPABASE_SERVICE.client)
+    access_profile = PLATFORM_ACCESS.profile()
+    if not access_profile['allowed']:
+        st.error(ACCESS_DENIED)
+        st.stop()
+    daily_limit = access_profile['daily_limit']
     teacher_profile = SUPABASE_SERVICE.get_profile()
-    daily_count = SUPABASE_SERVICE.get_daily_count()
+    daily_count = PLATFORM_ACCESS.daily_count(access_profile['user_id'])
 except SupabaseServiceError as error:
     st.error(str(error))
     st.stop()
 
-_render_brand_header(daily_count=daily_count, college=teacher_profile.college)
+_render_brand_header(daily_count=daily_count, college=teacher_profile.college, daily_limit=daily_limit)
 header_name, header_college, header_logout = st.columns([2, 2, 1])
 header_name.caption(f"Преподаватель · {teacher_profile.full_name}")
 header_college.caption(f"Колледж · {teacher_profile.college}")
@@ -556,9 +568,49 @@ if header_logout.button("Выйти", type="tertiary"):
     try:
         SUPABASE_SERVICE.sign_out()
     finally:
-        st.session_state.pop("pending_lesson_plan", None)
-        st.session_state.pop("auth_session", None)
+        st.session_state.clear()
         st.rerun()
+
+SUBSCRIPTIONS = SubscriptionService(SUPABASE_SERVICE.client)
+subscription_status = {'is_admin': access_profile['role'] == 'admin', 'user_id': access_profile['user_id']}
+
+workspace_views = WORKSPACE_VIEWS + (["Админ-панель"] if subscription_status['is_admin'] else [])
+if st.session_state.get('current_page') not in workspace_views:
+    st.session_state['current_page'] = 'Главная'
+current_page = st.session_state['current_page']
+workspace_view_key = f"workspace_view_{current_page}"
+st.radio(
+    "Раздел", workspace_views, index=workspace_views.index(current_page),
+    horizontal=True, key=workspace_view_key, on_change=_sync_current_page, args=(workspace_view_key,),
+)
+if current_page == 'Админ-панель':
+    try:
+        render_admin(SUBSCRIPTIONS, subscription_status)
+    except SupabaseServiceError as error:
+        st.error(str(error))
+    st.stop()
+
+def _run_ai(generator, *args, **kwargs):
+    # Re-read access and usage immediately before every paid AI operation.
+    try:
+        profile = PLATFORM_ACCESS.profile()
+        if not profile['allowed']:
+            st.error(ACCESS_DENIED)
+            st.stop()
+        if PLATFORM_ACCESS.daily_count(profile['user_id']) >= profile['daily_limit']:
+            st.warning(f"Дневной лимит генераций ({profile['daily_limit']}) исчерпан. Попробуйте завтра или обратитесь к администратору.")
+            st.stop()
+    except SupabaseServiceError as error:
+        st.error(str(error))
+        st.stop()
+    result = generator(*args, **kwargs)
+    try:
+        PLATFORM_ACCESS.record_success(profile['user_id'])
+    except SupabaseServiceError as error:
+        st.error(str(error))
+        st.stop()
+    return result
+
 
 try:
     lessons = SUPABASE_SERVICE.list_lessons()
@@ -566,20 +618,6 @@ except SupabaseServiceError as error:
     lessons = []
     st.error(str(error))
 
-if "current_page" not in st.session_state:
-    st.session_state["current_page"] = "Главная"
-
-current_page = st.session_state["current_page"]
-workspace_view_key = f"workspace_view_{current_page}"
-st.radio(
-    "Раздел",
-    WORKSPACE_VIEWS,
-    index=WORKSPACE_VIEWS.index(current_page),
-    horizontal=True,
-    key=workspace_view_key,
-    on_change=_sync_current_page,
-    args=(workspace_view_key,),
-)
 render_release_notice(SUPABASE_SERVICE, current_page)
 
 if current_page in ("Главная", "Мои занятия"):
@@ -702,8 +740,6 @@ if mode == "Поурочный план":
         ]
         if missing_fields:
             st.error("Заполните поля: " + ", ".join(missing_fields) + ".")
-        elif selected_lesson is None and daily_count >= DAILY_LESSON_LIMIT:
-            st.error(f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий.")
         else:
             material_type = "lesson_plan"
             stage = "start"
@@ -717,7 +753,7 @@ if mode == "Поурочный план":
                     _log_create_event(material_type, "AI generation started", subject, topic)
                     progress.write("🧠 Анализируем тему урока...")
                     operation_id = str(uuid.uuid4())
-                    lesson = generate_lesson_plan(
+                    lesson = _run_ai(generate_lesson_plan,
                         SUPABASE_SERVICE, create_lesson,
                         subject,
                         topic,
@@ -803,7 +839,7 @@ elif mode == "Лекция":
                     stage = "AI generation"
                     _log_create_event(material_type, "AI generation started", subject, topic)
                     progress.write("🧠 Анализируем тему занятия...")
-                    lecture = create_lecture(
+                    lecture = _run_ai(create_lecture,
                         subject, topic, language, specialty, pck, lecture_type, AI_CONFIG
                     )
                     _log_create_event(material_type, "AI generation completed", subject, topic)
@@ -911,7 +947,7 @@ elif mode == "Лекция":
                     stage = "AI generation"
                     _log_create_event(material_type, "AI generation started", subject, topic)
                     progress.write("🧠 Анализируем текущий материал...")
-                    updated_lecture = rework_lecture(
+                    updated_lecture = _run_ai(rework_lecture,
                         st.session_state["lecture_text"],
                         rework_mode,
                         AI_CONFIG,
@@ -997,7 +1033,7 @@ elif mode == "Практическое занятие":
             try:
                 with generation_status("Перерабатываем практическое занятие", ["✓ Материал готов"]) as progress:
                     _log_create_event(material_type, "AI generation started", subject, topic)
-                    updated_practice = rework_practice(
+                    updated_practice = _run_ai(rework_practice,
                         practice_material,
                         rework_mode,
                         lesson_plan=lesson_context.get("lesson_plan"),
@@ -1016,8 +1052,6 @@ elif mode == "Практическое занятие":
         missing_fields = [name for name, value in required_fields.items() if not value.strip()]
         if missing_fields:
             st.error("Заполните поля: " + ", ".join(missing_fields) + ".")
-        elif selected_lesson is None and daily_count >= DAILY_LESSON_LIMIT:
-            st.error(f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий.")
         else:
             material_type = "practice"
             stage = "AI generation"
@@ -1025,7 +1059,7 @@ elif mode == "Практическое занятие":
             try:
                 with generation_status("Создаём практическое занятие", ["✓ Материал готов"]) as progress:
                     _log_create_event(material_type, "AI generation started", subject, topic)
-                    content = create_practice(
+                    content = _run_ai(create_practice,
                         subject, topic, language, specialty, "Практикалық сабақ",
                         lesson_plan=lesson_context.get("lesson_plan"),
                         lecture=lesson_context.get("lecture"),
@@ -1076,7 +1110,7 @@ else:
                         item["material_type"]: _material_content(item["content"])
                         for item in materials
                     }
-                    artifact = PRESENTATION_SERVICE.generate(
+                    artifact = _run_ai(PRESENTATION_SERVICE.generate,
                         PresentationRequest(
                             subject=subject.strip(),
                             topic=topic.strip(),
