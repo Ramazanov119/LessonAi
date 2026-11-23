@@ -10,10 +10,9 @@ ACCESS_DENIED = 'Доступ к платформе приостановлен �
 
 
 class PlatformAccess:
-    def __init__(self, client, *, log_client=None):
+    def __init__(self, client):
+        # The same anon-key client whose user session was restored by the app.
         self.client = client
-        # Keep the service client separate: never attach the user's JWT to it.
-        self.log_client = log_client if log_client is not None else client
 
     def profile(self):
         try:
@@ -68,8 +67,20 @@ class PlatformAccess:
             'duration_ms': duration_ms,
         }
         try:
-            self.log_client.table('generation_logs').insert(payload).execute()
+            session = self.client.auth.get_session()
+            if session is None or not session.access_token:
+                raise ValueError('Нет активной пользовательской сессии Supabase. Войдите снова.')
+            user = self.client.auth.get_user().user
+            if user is None or str(user.id) != str(user_id):
+                raise ValueError('user_id не совпадает с текущим пользователем Supabase.')
+            # Explicitly use the current JWT for PostgREST, never the anon API key
+            # as the Authorization bearer. get_session also refreshes expired JWTs.
+            self.client.postgrest.auth(session.access_token)
+            # No SELECT permission is needed just to acknowledge the INSERT.
+            self.client.table('generation_logs').insert(payload, returning='minimal').execute()
         except Exception as error:
             logger.exception('generation_logs insert failed: user_id=%s agent_type=%s action_type=%s model_name=%s error=%s',
                              user_id, payload['agent_type'], payload['action_type'], payload['model_name'], error)
-            raise SupabaseServiceError('Материал создан, но не удалось записать генерацию. Обратитесь к администратору.') from error
+            raise SupabaseServiceError(
+                f'Материал создан, но не удалось записать генерацию. Причина Supabase: {error}'
+            ) from error

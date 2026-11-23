@@ -13,6 +13,7 @@ class PlatformAccessTests(unittest.TestCase):
     def service(self, **overrides):
         client = Mock()
         client.auth.get_user.return_value.user.id = 'teacher-id'
+        client.auth.get_session.return_value = SimpleNamespace(access_token='user-jwt', refresh_token='user-refresh')
         profile = dict(is_active=True, subscription_until=None, daily_limit=20,
                        role='teacher', organization_id=None)
         profile.update(overrides)
@@ -52,23 +53,32 @@ class PlatformAccessTests(unittest.TestCase):
         client.table.return_value.insert.assert_called_once_with({
             'user_id': 'teacher-id', 'agent_type': 'lesson_plan', 'action_type': 'generate',
             'status': 'success', 'model_name': 'unknown', 'duration_ms': 0,
-        })
+        }, returning='minimal')
 
 
-    def test_service_client_used_only_for_writing_log(self):
-        service, user_client = self.service()
-        log_client = Mock()
-        service = PlatformAccess(user_client, log_client=log_client)
-        self.assertTrue(service.profile()['allowed'])
+    def test_authenticated_client_used_for_writing_log(self):
+        service, client = self.service()
         service.record_success('teacher-id', agent_type='lecture', action_type='rework',
                                model_name='test-model', duration_ms=1250)
-        log_client.table.assert_called_once_with('generation_logs')
-        log_client.table.return_value.insert.assert_called_once_with({
+        client.postgrest.auth.assert_called_once_with('user-jwt')
+        client.table.assert_called_once_with('generation_logs')
+        client.table.return_value.insert.assert_called_once_with({
             'user_id': 'teacher-id', 'agent_type': 'lecture', 'action_type': 'rework',
             'status': 'success', 'model_name': 'test-model', 'duration_ms': 1250,
-        })
-        user_client.table.return_value.insert.assert_not_called()
-        log_client.auth.set_session.assert_not_called()
+        }, returning='minimal')
+
+    def test_missing_session_or_wrong_user_never_inserts(self):
+        for missing_session in (True, False):
+            service, client = self.service()
+            if missing_session:
+                client.auth.get_session.return_value = None
+            else:
+                client.auth.get_user.return_value.user.id = 'someone-else'
+            with self.assertLogs('services.platform_access', level='ERROR'):
+                with self.assertRaises(SupabaseServiceError):
+                    service.record_success('teacher-id')
+            client.table.return_value.insert.assert_not_called()
+            client.postgrest.auth.assert_not_called()
 
     def test_invalid_duration_is_rejected_before_insert(self):
         for duration in (-1, 1.5, True, None):
@@ -86,7 +96,7 @@ class PlatformAccessTests(unittest.TestCase):
             with self.assertRaises(SupabaseServiceError) as raised:
                 service.record_success('teacher-id')
         self.assertIn(message, '\n'.join(logs.output))
-        self.assertNotIn(message, str(raised.exception))
+        self.assertIn(message, str(raised.exception))
 
 
 class GenerationGuardTests(unittest.TestCase):
@@ -116,6 +126,10 @@ class GenerationGuardTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             run(generator)
         service.record_success.assert_not_called()
+        generator.side_effect = None
+        service.record_success.side_effect = SupabaseServiceError('Supabase: RLS denied')
+        self.assertEqual(run(generator), 'material')
+        st.warning.assert_called_with('Supabase: RLS denied')
         service.profile.return_value['allowed'] = False
         with self.assertRaises(Stopped):
             run(generator)
