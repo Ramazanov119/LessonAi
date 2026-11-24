@@ -223,7 +223,7 @@ def _log_create_failure(material_type, stage, subject, topic, error):
                  material_type, stage, details['phase'], details['error_type'], details['code'], details['task_token'])
 
 
-def _render_brand_header(*, daily_count=None, college=None, daily_limit=20):
+def _render_brand_header(*, daily_count=None, college=None, daily_limit=10):
     quota_class = ""
 
     if daily_count == daily_limit:
@@ -562,6 +562,9 @@ except SupabaseServiceError as error:
     st.stop()
 
 _render_brand_header(daily_count=daily_count, college=teacher_profile.college, daily_limit=daily_limit)
+generation_limit_reached = daily_limit <= 0 or daily_count >= daily_limit
+if generation_limit_reached:
+    st.warning(f"Дневной лимит генераций ({daily_count} из {daily_limit}) исчерпан. Обратитесь к администратору.")
 header_name, header_college, header_logout = st.columns([2, 2, 1])
 header_name.caption(f"Преподаватель · {teacher_profile.full_name}")
 header_college.caption(f"Колледж · {teacher_profile.college}")
@@ -598,8 +601,9 @@ def _run_ai(generator, *args, **kwargs):
         if not profile['allowed']:
             st.error(ACCESS_DENIED)
             st.stop()
-        if PLATFORM_ACCESS.daily_count(profile['user_id']) >= profile['daily_limit']:
-            st.warning(f"Дневной лимит генераций ({profile['daily_limit']}) исчерпан. Попробуйте завтра или обратитесь к администратору.")
+        count = PLATFORM_ACCESS.daily_count(profile['user_id'])
+        if profile['daily_limit'] <= 0 or count >= profile['daily_limit']:
+            st.warning(f"Дневной лимит генераций ({count} из {profile['daily_limit']}) исчерпан. Обратитесь к администратору.")
             st.stop()
     except SupabaseServiceError as error:
         st.error(str(error))
@@ -728,7 +732,7 @@ if mode == "Поурочный план":
             except Exception as error:
                 _log_create_failure("lesson_plan", "retry save", "", "", error)
                 _show_generation_error()
-    if st.button("Создать план урока", type="primary", icon="✨", disabled=pending is not None):
+    if st.button("Создать план урока", type="primary", icon="✨", disabled=pending is not None or generation_limit_reached):
         required_fields = {
             "ФИО преподавателя": teacher_name,
             "Предмет": subject,
@@ -815,7 +819,7 @@ elif mode == "Лекция":
         disabled=selected_lesson is not None,
         key=f"lecture_type_{form_key_suffix}",
     )
-    if st.button("Создать лекцию", type="primary", icon="✨"):
+    if st.button("Создать лекцию", type="primary", icon="✨", disabled=generation_limit_reached):
         required_fields = {
             "ФИО преподавателя": teacher_name,
             "Предмет": subject,
@@ -933,6 +937,7 @@ elif mode == "Лекция":
         if st.button(
             "Применить переработку",
             key="lecture_rework_button",
+            disabled=generation_limit_reached,
             type="secondary",
             icon="🔄",
         ):
@@ -1026,7 +1031,7 @@ elif mode == "Практическое занятие":
             ],
             key=f"practice_rework_{form_key_suffix}",
         )
-        if st.button("Применить переработку", key=f"practice_rework_button_{form_key_suffix}", type="secondary", icon="🔄"):
+        if st.button("Применить переработку", key=f"practice_rework_button_{form_key_suffix}", type="secondary", icon="🔄", disabled=generation_limit_reached):
             material_type = "practice"
             stage = "AI generation"
             _log_create_event(material_type, "start", subject, topic)
@@ -1047,7 +1052,7 @@ elif mode == "Практическое занятие":
             except Exception as error:
                 _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()
-    elif st.button("Создать практическое занятие", type="primary", icon="✨"):
+    elif st.button("Создать практическое занятие", type="primary", icon="✨", disabled=generation_limit_reached):
         required_fields = {"Предмет": subject, "Тема": topic, "Группа": group_name}
         missing_fields = [name for name, value in required_fields.items() if not value.strip()]
         if missing_fields:
@@ -1095,7 +1100,7 @@ elif mode == "Практическое занятие":
                 _log_create_failure(material_type, stage, subject, topic, error)
                 _show_generation_error()
 else:
-    if st.button("Создать презентацию", type="primary", icon="✨"):
+    if st.button("Создать презентацию", type="primary", icon="✨", disabled=generation_limit_reached):
         if selected_lesson is None:
             st.error("Сначала создайте занятие с поурочным планом или лекцией.")
         else:

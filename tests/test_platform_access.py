@@ -14,7 +14,7 @@ class PlatformAccessTests(unittest.TestCase):
         client = Mock()
         client.auth.get_user.return_value.user.id = 'teacher-id'
         client.auth.get_session.return_value = SimpleNamespace(access_token='user-jwt', refresh_token='user-refresh')
-        profile = dict(is_active=True, subscription_until=None, daily_limit=20,
+        profile = dict(is_active=True, subscription_until=None, daily_limit_v1=20,
                        role='teacher', organization_id=None)
         profile.update(overrides)
         client.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = profile
@@ -37,18 +37,44 @@ class PlatformAccessTests(unittest.TestCase):
             self.assertEqual(service.profile()['allowed'], organization == {'is_active': True})
 
     def test_invalid_limit_and_unavailable_profile_fail_closed(self):
-        for limit in (-1, None, True, '20'):
-            service, _ = self.service(daily_limit=limit)
+        for limit in (True, '20', 1.5):
+            service, _ = self.service(daily_limit_v1=limit)
             with self.assertRaises(SupabaseServiceError):
                 service.profile()
 
+    def test_personal_limit_fallback_and_closed_generation(self):
+        for value, expected in ((7, 7), (None, 10), (0, 0), (-1, -1)):
+            with self.subTest(value=value):
+                service, client = self.service(daily_limit_v1=value, daily_limit=999)
+                profile = service.profile()
+                self.assertEqual(profile['daily_limit'], expected)
+                self.assertEqual(profile['generation_allowed'], expected > 0)
+                client.postgrest.auth.assert_called_once_with('user-jwt')
+                client.table.return_value.select.assert_called_once_with(
+                    'is_active, subscription_until, daily_limit_v1, role, organization_id')
+        service, client = self.service()
+        del client.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data['daily_limit_v1']
+        self.assertEqual(service.profile()['daily_limit'], 10)
+
+    def test_profile_requires_authenticated_session(self):
+        service, client = self.service()
+        client.auth.get_session.return_value = None
+        with self.assertRaises(SupabaseServiceError):
+            service.profile()
+        client.table.assert_not_called()
+
     def test_count_is_scoped_to_user_and_utc_day(self):
         service, client = self.service()
-        query = client.table.return_value.select.return_value.eq.return_value
+        query = client.table.return_value.select.return_value.eq.return_value.eq.return_value
         query.gte.return_value.lt.return_value.execute.return_value.count = 20
         self.assertEqual(service.daily_count('teacher-id'), 20)
         client.table.return_value.select.return_value.eq.assert_called_with('user_id', 'teacher-id')
+        client.table.return_value.select.return_value.eq.return_value.eq.assert_called_once_with('status', 'success')
         self.assertTrue(query.gte.call_args.args[1].endswith('T00:00:00+00:00'))
+        start = datetime.fromisoformat(query.gte.call_args.args[1])
+        end = datetime.fromisoformat(query.gte.return_value.lt.call_args.args[1])
+        self.assertEqual(end - start, timedelta(days=1))
+        client.postgrest.auth.assert_called_once_with('user-jwt')
         service.record_success('teacher-id')
         client.table.return_value.insert.assert_called_once_with({
             'user_id': 'teacher-id', 'agent_type': 'lesson_plan', 'action_type': 'generate',
@@ -117,7 +143,15 @@ class GenerationGuardTests(unittest.TestCase):
             run(generator)
         generator.assert_not_called()
         st.warning.assert_called_once()
+        st.warning.assert_called_with('Дневной лимит генераций (20 из 20) исчерпан. Обратитесь к администратору.')
         service.record_success.assert_not_called()
+        for limit in (0, -1):
+            service.profile.return_value['daily_limit'] = limit
+            service.daily_count.return_value = 0
+            with self.assertRaises(Stopped):
+                run(generator)
+            generator.assert_not_called()
+        service.profile.return_value['daily_limit'] = 20
         service.daily_count.return_value = 19
         self.assertEqual(run(generator), 'material')
         service.record_success.assert_called_once_with('u')
@@ -134,6 +168,19 @@ class GenerationGuardTests(unittest.TestCase):
         with self.assertRaises(Stopped):
             run(generator)
         st.error.assert_called_with('denied')
+
+    def test_creation_and_rework_buttons_disable_at_limit(self):
+        source = ast.parse((Path(__file__).resolve().parents[1] / 'app.py').read_text())
+        buttons = [node for node in ast.walk(source) if isinstance(node, ast.Call)
+                   and isinstance(node.func, ast.Attribute) and node.func.attr == 'button'
+                   and node.args and isinstance(node.args[0], ast.Constant)
+                   and node.args[0].value in ('Создать план урока', 'Создать лекцию',
+                       'Создать практическое занятие', 'Создать презентацию', 'Применить переработку')]
+        self.assertEqual(len(buttons), 6)
+        for button in buttons:
+            disabled = next(k.value for k in button.keywords if k.arg == 'disabled')
+            self.assertTrue(any(isinstance(n, ast.Name) and n.id == 'generation_limit_reached'
+                                for n in ast.walk(disabled)))
 
 
 if __name__ == '__main__':

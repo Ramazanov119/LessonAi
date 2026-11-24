@@ -16,9 +16,13 @@ class PlatformAccess:
 
     def profile(self):
         try:
+            session = self.client.auth.get_session()
+            if session is None or not session.access_token:
+                raise ValueError('Missing user session')
             user_id = self.client.auth.get_user().user.id
+            self.client.postgrest.auth(session.access_token)
             profile = self.client.table('profiles').select(
-                'is_active, subscription_until, daily_limit, role, organization_id'
+                'is_active, subscription_until, daily_limit_v1, role, organization_id'
             ).eq('id', user_id).single().execute().data
             if not isinstance(profile, dict) or type(profile.get('is_active')) is not bool:
                 raise ValueError('Invalid profile')
@@ -33,18 +37,29 @@ class PlatformAccess:
                     'id', profile['organization_id']
                 ).single().execute().data
                 active = active and isinstance(organization, dict) and organization.get('is_active') is True
-            limit = profile.get('daily_limit', 20)
-            if type(limit) is not int or limit < 0:
+            limit = profile.get('daily_limit_v1')
+            if limit is None:
+                limit = 10
+            if type(limit) is not int:
                 raise ValueError('Invalid daily limit')
-            return {**profile, 'user_id': user_id, 'daily_limit': limit, 'allowed': active}
+            return {**profile, 'user_id': user_id, 'daily_limit': limit,
+                    'allowed': active, 'generation_allowed': active and limit > 0}
         except Exception as error:
             raise SupabaseServiceError('Не удалось проверить доступ к платформе. Обратитесь к администратору.') from error
 
     def daily_count(self, user_id):
         start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         try:
+            session = self.client.auth.get_session()
+            if session is None or not session.access_token:
+                raise ValueError('Missing user session')
+            if str(self.client.auth.get_user().user.id) != str(user_id):
+                raise ValueError('User mismatch')
+            self.client.postgrest.auth(session.access_token)
             result = self.client.table('generation_logs').select('id', count='exact', head=True).eq(
                 'user_id', user_id
+            ).eq(
+                'status', 'success'
             ).gte('created_at', start.isoformat()).lt(
                 'created_at', (start + timedelta(days=1)).isoformat()
             ).execute()
