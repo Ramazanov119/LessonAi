@@ -5,7 +5,6 @@ import uuid
 
 from models.generation import LessonMetadata, TeacherProfile
 
-DAILY_LESSON_LIMIT = 8
 FIXED_LESSON_DURATION = "70 минут"
 ALLOWED_COLLEGES = ("ETEC", "META", "ALT", "Q", "ATKK")
 MATERIAL_TYPES = ("lesson_plan", "lecture", "practice", "presentation")
@@ -263,15 +262,30 @@ class SupabaseService:
         except Exception as error:
             message = str(error)
             if "DAILY_LIMIT_REACHED" in message:
-                raise DailyLimitExceeded(
-                    f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий."
-                ) from error
+                raise self._daily_limit_error() from error
             raise SupabaseServiceError(
                 "Не удалось сохранить занятие в Supabase."
             ) from error
         if not response.data:
             raise SupabaseServiceError("Supabase не подтвердил создание занятия.")
         return response.data[0] if isinstance(response.data, list) else response.data
+
+    def _daily_limit_error(self):
+        # Read the current JWT-backed profile, never a tariff or session-state quota.
+        from services.platform_access import PlatformAccess
+        access = PlatformAccess(self.client)
+        profile = access.profile()
+        count = access.daily_count(profile['user_id'])
+        limit = profile['daily_limit']
+        if limit > 0 and count < limit:
+            return DatabaseCompatibilityError(
+                'База данных применяет устаревший лимит сохранения. '
+                'Администратору необходимо применить миграцию 007_profile_generation_limit.sql '
+                'для public.create_lesson_with_daily_limit. Готовый материал можно сохранить повторно.'
+            )
+        return DailyLimitExceeded(
+            f'Дневной лимит генераций ({count} из {limit}) исчерпан. Обратитесь к администратору.'
+        )
 
     def ensure_lesson_plan_storage(self, *, operation_id=None):
         """Read-only RPC. Never probe readiness by attempting a document write."""
@@ -323,7 +337,7 @@ class SupabaseService:
             from services.storage_diagnostics import database_failure
             details = database_failure(error, 'save_lesson_plan_with_daily_limit', 'save', operation_id)
             if details['reason'] == 'daily_limit_reached':
-                failed = DailyLimitExceeded(f"Достигнут дневной лимит: {DAILY_LESSON_LIMIT} занятий.")
+                failed = self._daily_limit_error()
             elif details['code'] in ('PGRST202', 'PGRST203', '42883', '42501'):
                 failed = DatabaseCompatibilityError(DATABASE_UPDATE_MESSAGE)
             elif details['reason'] == 'idempotency_conflict':

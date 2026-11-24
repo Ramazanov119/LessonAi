@@ -61,22 +61,30 @@ class SubscriptionTest(unittest.TestCase):
                 teacher = Mock()
                 teacher.restore_session.return_value = SimpleNamespace(access_token='new-a', refresh_token='new-r')
                 teacher.get_profile.return_value = SimpleNamespace(full_name='Teacher',college='ETEC')
-                teacher.get_daily_count.return_value = 0
                 teacher.list_lessons.return_value = []
+                platform = Mock()
+                platform.profile.return_value = dict(allowed=allowed, user_id='teacher',
+                    role='admin' if admin else 'teacher', daily_limit=35)
+                platform.daily_count.return_value = 8
                 app = AppTest.from_file(str(Path(__file__).resolve().parents[1]/'app.py'))
                 app.secrets.update({'OPENAI_API_KEY':'test','OPENROUTER_API_KEY':'test','SUPABASE_URL':'https://example.test','SUPABASE_ANON_KEY':'test'})
                 app.session_state['auth_session'] = {'access_token':'old-a','refresh_token':'old-r'}
                 with patch('services.supabase_service.create_supabase_client', return_value=Mock()), \
                      patch('services.supabase_service.SupabaseService', return_value=teacher), \
+                     patch('services.platform_access.PlatformAccess', return_value=platform), \
                      patch('services.subscription_service.SubscriptionService.access', return_value=access(admin,allowed)), \
                      patch('ui.release_notice.render_release_notice'):
                     app.run(timeout=15)
                 self.assertFalse(app.exception, str(app.exception))
-                navigation = next(r for r in app.radio if r.label=='Раздел')
-                self.assertEqual('Админ-панель' in navigation.options, admin)
                 if not allowed:
                     teacher.list_lessons.assert_not_called()
                     self.assertTrue(app.error)
+                else:
+                    navigation = next(r for r in app.radio if r.label=='Раздел')
+                    self.assertEqual('Админ-панель' in navigation.options, admin)
+                    self.assertTrue(any('8/35' in m.value for m in app.markdown))
+                    platform.profile.assert_called_once()
+                    platform.daily_count.assert_called_once_with('teacher')
                 self.assertEqual(app.session_state['auth_session']['refresh_token'], 'new-r')
 
     def test_admin_ui_rechecks_role_before_loading_users(self):

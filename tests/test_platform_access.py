@@ -63,6 +63,13 @@ class PlatformAccessTests(unittest.TestCase):
             service.profile()
         client.table.assert_not_called()
 
+    def test_limit_is_fetched_again_after_admin_changes_it(self):
+        service, client = self.service(daily_limit_v1=8)
+        self.assertEqual(service.profile()['daily_limit'], 8)
+        client.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data['daily_limit_v1'] = 35
+        self.assertEqual(service.profile()['daily_limit'], 35)
+        self.assertEqual(client.table.return_value.select.call_count, 2)
+
     def test_count_is_scoped_to_user_and_utc_day(self):
         service, client = self.service()
         query = client.table.return_value.select.return_value.eq.return_value.eq.return_value

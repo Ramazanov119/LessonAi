@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 from docx import Document
 from config.colleges import get_college_config
 from services.lesson_plan_service import generate_lesson_plan, PendingLessonPlan
-from services.supabase_service import SupabaseService, SupabaseServiceError, DatabaseCompatibilityError
+from services.supabase_service import SupabaseService, SupabaseServiceError, DatabaseCompatibilityError, DailyLimitExceeded
 from services.storage_diagnostics import database_failure
 from test_meta_task_links import metadata
 from test_meta_structural_validation import ios
@@ -32,6 +32,27 @@ def client(ready=True):
 
 
 class LessonStorageTest(unittest.TestCase):
+    @patch('services.platform_access.PlatformAccess')
+    def test_legacy_rpc_limit_uses_fresh_personal_limit(self, access):
+        connection = client()
+        connection.rpc.side_effect = DatabaseError('P0001', 'DAILY_LIMIT_REACHED')
+        access.return_value.profile.return_value = {'user_id': 'teacher', 'daily_limit': 35}
+        access.return_value.daily_count.return_value = 8
+        for save in (False, True):
+            with self.subTest(save=save), self.assertRaises(DatabaseCompatibilityError) as raised:
+                service = SupabaseService(connection)
+                if save:
+                    service.save_lesson_plan(metadata('Q'), '{}', operation_id=OPERATION)
+                else:
+                    service.create_lesson(metadata('Q'))
+            self.assertIn('007_profile_generation_limit.sql', str(raised.exception))
+        self.assertEqual(access.return_value.profile.call_count, 2)
+        access.return_value.profile.return_value['daily_limit'] = 8
+        with self.assertRaises(DailyLimitExceeded) as raised:
+            SupabaseService(connection).create_lesson(metadata('Q'))
+        self.assertEqual(str(raised.exception),
+                         'Дневной лимит генераций (8 из 8) исчерпан. Обратитесь к администратору.')
+
     def test_missing_rpc_prevents_paid_generator_for_every_college(self):
         for college in ('META', 'Q', 'ETEC', 'ALT', 'ATKK'):
             with self.subTest(college=college):

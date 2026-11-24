@@ -226,7 +226,7 @@ def _log_create_failure(material_type, stage, subject, topic, error):
 def _render_brand_header(*, daily_count=None, college=None, daily_limit=10):
     quota_class = ""
 
-    if daily_count == daily_limit:
+    if daily_limit <= 0 or (daily_count is not None and daily_count >= daily_limit):
         quota_class = "danger"
     elif daily_count is not None and daily_count >= daily_limit * 0.75:
         quota_class = "warning"
@@ -717,7 +717,7 @@ if mode == "Поурочный план":
         if st.button("Повторить сохранение", key="retry_pending_plan"):
             try:
                 doc, saved_lesson = pending.save(SUPABASE_SERVICE)
-                daily_count = saved_lesson["daily_count"]
+                daily_count = PLATFORM_ACCESS.daily_count(access_profile['user_id'])
                 st.session_state.pop("pending_lesson_plan", None)
                 st.success("Готовый план сохранён.")
                 st.download_button("Скачать DOCX", doc, "lesson.docx", key="retried_plan_doc")
@@ -790,7 +790,7 @@ if mode == "Поурочный план":
                     st.session_state["pending_lesson_plan"] = pending
                     doc, saved_lesson = pending.save(SUPABASE_SERVICE)
                     st.session_state.pop("pending_lesson_plan", None)
-                    daily_count = saved_lesson["daily_count"]
+                    daily_count = PLATFORM_ACCESS.daily_count(access_profile['user_id'])
                     _log_create_event(material_type, "document generation completed", subject, topic)
                     _log_create_event(material_type, "material saved", subject, topic)
                 stage = "preview"
@@ -1087,7 +1087,7 @@ elif mode == "Практическое занятие":
                     st.session_state["selected_lesson_id"] = saved_lesson["lesson_id"]
                     stage = "material save"
                     SUPABASE_SERVICE.upsert_material(saved_lesson["lesson_id"], material_type, _material_content(content))
-                    daily_count = saved_lesson.get("daily_count", daily_count)
+                    daily_count = PLATFORM_ACCESS.daily_count(access_profile['user_id'])
                     stage = "document generation"
                     document = build_practice_docx(
                         content, title=f"Практическое занятие: {topic}", college=selected_college,
