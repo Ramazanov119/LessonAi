@@ -410,6 +410,12 @@ def build_doc(
         selected_date = next((metadata[key] for key in ("lesson_date", "date", "data")
                               if metadata.get(key) not in (None, "")), None)
         formatted_date = lesson_date_value(selected_date).strftime("%d.%m.%Y")
+        if str(college or "").upper() == "ETEC" or Path(template_path).resolve() == get_college_config("ETEC")["template"].resolve():
+            from services.etec_lesson import fill_etec_timing
+            fill_etec_timing(doc)
+
+        from services.lesson_template_localization import localize_lesson_template
+        localize_lesson_template(doc, metadata.get("language", "Русский"))
         is_meta = str(college or "").upper() == "META" or Path(template_path).resolve() == get_college_config("META")["template"].resolve()
         if is_meta:
             if template_fields.get('meta_schema_version') == 1:
@@ -421,10 +427,6 @@ def build_doc(
                     lesson_type=metadata.get("lesson_type", ""), lesson_date=selected_date,
                 )
             fill_meta_tables(doc, template_fields, metadata.get("language", "Русский"))
-
-        if str(college or "").upper() == "ETEC" or Path(template_path).resolve() == get_college_config("ETEC")["template"].resolve():
-            from services.etec_lesson import fill_etec_timing
-            fill_etec_timing(doc)
 
         is_q = str(college or "").upper() == "Q" or Path(template_path).resolve() == get_college_config("Q")["template"].resolve()
         q_fields = q_template_fields(template_fields, metadata.get("language", "Русский")) if is_q else {}
@@ -455,7 +457,7 @@ def build_doc(
             all_fields.update({key: labels[key] for key in ("explanatory_method_label", "practical_task_label")})
 
         all_fields.update(date=formatted_date, data=formatted_date,
-                          lesson_date=formatted_date + (" ж./г." if is_meta else ""))
+                          lesson_date=formatted_date)
         _fill_document(doc, all_fields, meta_font=is_meta)
         # Preserve the original Word template structure and formatting; only
         # replace the placeholder text already present in the template.

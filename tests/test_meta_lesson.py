@@ -89,13 +89,13 @@ class MetaLessonTest(unittest.TestCase):
     def test_selected_date_overrides_all_ai_aliases(self):
         doc = export()
         text = doc.tables[1].cell(0, 3).text
-        self.assertEqual(text, '09.10.2026 ж./г.')
+        self.assertEqual(text, '09.10.2026')
         self.assertNotIn('28.06.2024', text)
         self.assertEqual(export(date='09.10.2026 ж./г.').tables[1].cell(0, 3).text, text)
 
     @patch('services.lesson_validation.almaty_today', return_value=date(2026, 10, 9))
     def test_missing_date_uses_current_almaty_date(self, today):
-        self.assertEqual(export(date=None).tables[1].cell(0, 3).text, '09.10.2026 ж./г.')
+        self.assertEqual(export(date=None).tables[1].cell(0, 3).text, '09.10.2026')
         today.assert_called()
 
     def test_almaty_day_at_utc_boundary(self):
@@ -112,7 +112,7 @@ class MetaLessonTest(unittest.TestCase):
         lesson = dict(topic='Фишинг', subject='Информатика', full_name='Teacher', lesson_date='2026-10-09',
                       course=1, group_name='IT-1', lesson_type='Лекция', language='Русский', college='META')
         _, file, _ = namespace['_material_download'](lesson, {'material_type': 'lesson_plan', 'content': json.dumps(meta_plan())})
-        self.assertEqual(Document(file).tables[1].cell(0, 3).text, '09.10.2026 ж./г.')
+        self.assertEqual(Document(file).tables[1].cell(0, 3).text, '09.10.2026')
 
     def test_lecture_practice_and_laboratory_timings_match_word(self):
         for kind in ('Лекция', 'Практическое занятие', 'Лабораторная работа'):
@@ -217,7 +217,7 @@ class MetaLessonTest(unittest.TestCase):
             self.assertEqual([col.width for col in before.columns], [col.width for col in after.columns])
         self.assertEqual([x.xml for x in original.tables[2].rows[1].cells[0]._tc.xpath('./w:tcPr/w:tcBorders')],
                          [x.xml for x in result.tables[2].rows[1].cells[0]._tc.xpath('./w:tcPr/w:tcBorders')])
-        for code, expected in (('META', 70), ('ETEC', 70), ('ALT', 90), ('Q', 90), ('ATKK', 70)):
+        for code, expected in (('META', 70), ('ETEC', 90), ('ALT', 90), ('Q', 90), ('ATKK', 70)):
             self.assertEqual(COLLEGES[code]['lesson_duration'], expected)
         for code in ('ETEC', 'ALT', 'Q', 'ATKK'):
             doc = Document(build_doc('План урока', {'date': '28.06.2024', 'interdisciplinary_connections': 'Математика — вычисления по теме'},

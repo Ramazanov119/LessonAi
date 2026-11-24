@@ -46,8 +46,10 @@ class QDocxTest(unittest.TestCase):
                 self.assertEqual(len(matches), 1)
                 self.assertEqual(matches[0].cells[1].text, LINKS[language])
                 self.assertIn('13.10.2026', doc.tables[0].rows[3].cells[1].text)
-                self.assertEqual([r.cells[1].text for r in doc.tables[1].rows],
-                                 [r.cells[1].text for r in Document(TEMPLATE).tables[1].rows])
+                self.assertEqual(doc.tables[1].rows[0].cells[1].text,
+                                 'Уақыты' if language == 'Қазақша' else 'Время')
+                self.assertEqual([r.cells[1].text for r in doc.tables[1].rows[1:]],
+                                 [r.cells[1].text for r in Document(TEMPLATE).tables[1].rows[1:]])
 
     @patch('services.ai.openai_generate')
     def test_one_ai_request_includes_topic_specific_links_and_language(self, provider):

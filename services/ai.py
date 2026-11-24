@@ -306,15 +306,16 @@ educational_goal.
 
 Поле goal должно:
 
-- обязательно начинаться со слова «Научить»;
+- формулировать цель на выбранном языке занятия;
+- для русского языка начинать со слова «Научить»;
+- для казахского языка использовать естественный порядок слов и завершать цель глаголом «үйрету»;
+- для английского языка начинать со слова «Teach»;
 - содержать конкретный и измеримый результат обучения;
 - использовать деятельностные глаголы, соответствующие таксономии Блума;
 - не повторять название темы без конкретизации;
 - соответствовать содержанию практической части занятия.
 
-Пример:
-«Научить студентов применять линейные алгоритмы для решения
-практических задач средствами языка C#».
+Пример цели на языке занятия: {goal_example}
 
 ### ҚҰНДЫЛЫҚТАР
 
@@ -570,14 +571,17 @@ interdisciplinary_connections должны быть заполнены коро�
 """
     from services.lesson_validation import normalize_meta_lesson, lesson_date_value, BLOOM_LEVELS, language_code
     from config.colleges import get_college_config
+    goal_examples = {
+        'kk': 'Студенттерге C# тілінде практикалық есептерді шешу үшін сызықтық алгоритмдерді қолдануды үйрету.',
+        'ru': 'Научить студентов применять линейные алгоритмы для решения практических задач средствами языка C#.',
+        'en': 'Teach students to apply linear algorithms to solve practical problems using C#.',
+    }
+    system = system.replace('{goal_example}', goal_examples[language_code(language)])
+    system += f'\nЯзык всех текстовых значений JSON: {language}. Переведи на него также примеры, названия методов, цели, задания, критерии и дескрипторы. Ключи JSON сохраняй без перевода.'
     if str(college or "").upper() == "META":
         # Extend the existing request; no additional provider call.
         lesson_duration = get_college_config("META")["lesson_duration"]
         levels = ", ".join(BLOOM_LEVELS[language_code(language)])
-        system = system.replace(
-            '- обязательно начинаться со слова «Научить»;',
-            '- начинаться с глагола обучения на выбранном языке: «Научить», «Үйрету» или «Teach»;',
-        )
         prompt += f"""
 Дополнительная структура для META College, продолжительность {lesson_duration} минут.
 Кроме существующих строковых полей добавь:

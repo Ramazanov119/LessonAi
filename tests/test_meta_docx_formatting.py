@@ -132,7 +132,7 @@ class MetaDocxFormattingTest(unittest.TestCase):
                 self.assertLess(paragraph.paragraph_format.first_line_indent, 0)
                 self.assertTrue(paragraph.text.strip())
         self.assertEqual(sum(int(r.cells[4].text) for r in doc.tables[2].rows[1:-1]), 100)
-        self.assertEqual(doc.tables[1].cell(0, 3).text, '09.10.2026 ж./г.')
+        self.assertEqual(doc.tables[1].cell(0, 3).text, '09.10.2026')
         minutes = [int(re.search(r'\((\d+) мин', r.cells[0].text).group(1)) for r in doc.tables[1].rows[14:]]
         self.assertEqual(sum(minutes), 70)
         self.assertIn('ә', doc.tables[1].rows[9].cells[1].text)
@@ -141,8 +141,16 @@ class MetaDocxFormattingTest(unittest.TestCase):
         before_path = ROOT / 'docs/template_backups/template_meta.before_localization.docx'
         before = Document(before_path)
         after = Document(create('Қазақша'))
-        self.assertEqual([p._p.xml for p in before.paragraphs], [p._p.xml for p in after.paragraphs])
-        self.assertEqual(before.tables[0]._tbl.xml, after.tables[0]._tbl.xml)
+        # Static shell labels now follow the selected language; drawings stay intact.
+        self.assertEqual([node.xml for node in before.element.xpath('.//w:drawing')],
+                         [node.xml for node in after.element.xpath('.//w:drawing')])
+        text = ' '.join(p.text for p in after.paragraphs)
+        self.assertIn('Оқу сабағының жоспары', text)
+        self.assertNotIn('План учебного занятия', text)
+        self.assertEqual([c.width for c in before.tables[0].columns],
+                         [c.width for c in after.tables[0].columns])
+        self.assertIn('Бекітемін', after.tables[0]._tbl.xml)
+        self.assertNotIn('Утверждаю', after.tables[0]._tbl.xml)
         self.assertEqual([s._sectPr.xml for s in before.sections], [s._sectPr.xml for s in after.sections])
         self.assertEqual([c.width for c in before.tables[1].columns], [c.width for c in after.tables[1].columns])
         with ZipFile(before_path) as reference, ZipFile(create('Қазақша')) as output:
