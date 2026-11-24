@@ -219,6 +219,19 @@ def _log_create_event(material_type, event, subject, topic):
 def _log_create_failure(material_type, stage, subject, topic, error):
     from services.meta_diagnostics import failure_metadata
     details = failure_metadata(error)
+    storage = getattr(error, 'diagnostics', None)
+    if isinstance(storage, dict):
+        original = error.__cause__ or error
+        logger.exception(
+            '[CREATE] failed material_type=%s stage=%s validation_phase=%s error_type=%s '
+            'error_code=%s rpc=%s reason=%s operation_id=%s error=%s code=%s details=%s hint=%s',
+            material_type, stage, storage.get('phase'), type(error).__name__, storage.get('code'),
+            storage.get('rpc'), storage.get('reason'), storage.get('operation_id'),
+            str(original), getattr(original, 'code', None), getattr(original, 'details', None),
+            getattr(original, 'hint', None),
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        return
     logger.error("[CREATE] failed material_type=%s stage=%s validation_phase=%s error_type=%s error_code=%s task_token=%s",
                  material_type, stage, details['phase'], details['error_type'], details['code'], details['task_token'])
 

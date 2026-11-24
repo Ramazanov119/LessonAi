@@ -32,6 +32,49 @@ def client(ready=True):
 
 
 class LessonStorageTest(unittest.TestCase):
+    def test_original_postgrest_error_is_logged_and_chained(self):
+        for preflight in (True, False):
+            with self.subTest(preflight=preflight):
+                connection = client()
+                original = DatabaseError('PGRST202', 'Could not find the function public.save_lesson_plan_with_daily_limit')
+                original.details = 'Searched for p_operation_id and p_existing_lesson_id'
+                original.hint = 'Reload the PostgREST schema cache'
+                connection.rpc.side_effect = original
+                service = SupabaseService(connection)
+                with self.assertLogs('services.supabase_service', level='ERROR') as captured:
+                    with self.assertRaises(DatabaseCompatibilityError) as raised:
+                        if preflight:
+                            service.ensure_lesson_plan_storage(operation_id=OPERATION)
+                        else:
+                            service.save_lesson_plan(metadata(), '{}', operation_id=OPERATION)
+                output = '\n'.join(captured.output)
+                for value in (str(original), original.code, original.details, original.hint, OPERATION):
+                    self.assertIn(value, output)
+                self.assertIs(raised.exception.__cause__, original)
+                self.assertIs(captured.records[0].exc_info[1], original)
+                self.assertNotIn(original.details, str(raised.exception))
+
+    def test_ui_storage_failure_logs_database_code_instead_of_operation_failed(self):
+        import ast
+        root = Path(__file__).resolve().parents[1]
+        function = next(n for n in ast.parse((root / 'app.py').read_text()).body
+                        if isinstance(n, ast.FunctionDef) and n.name == '_log_create_failure')
+        logger = Mock()
+        namespace = {'logger': logger}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), '<log>', 'exec'), namespace)
+        original = DatabaseError('42501', 'permission denied for function save_lesson_plan_with_daily_limit')
+        original.details, original.hint = 'EXECUTE missing', 'Grant authenticated access'
+        error = DatabaseCompatibilityError('Update required')
+        error.__cause__ = original
+        error.diagnostics = database_failure(original, 'save_lesson_plan_with_daily_limit', 'save', OPERATION)
+        namespace['_log_create_failure']('lesson_plan', 'document validation and atomic save', '', '', error)
+        args = logger.exception.call_args.args
+        output = args[0] % args[1:]
+        self.assertIn('error_code=42501', output)
+        for value in (str(original), original.details, original.hint, OPERATION):
+            self.assertIn(value, output)
+        self.assertNotIn('operation_failed', output)
+
     @patch('services.platform_access.PlatformAccess')
     def test_legacy_rpc_limit_uses_fresh_personal_limit(self, access):
         connection = client()

@@ -2,8 +2,19 @@ from dataclasses import asdict
 from datetime import date
 from typing import Any, Optional
 import uuid
+import logging
 
 from models.generation import LessonMetadata, TeacherProfile
+
+logger = logging.getLogger(__name__)
+
+
+def _log_rpc_exception(error, rpc, operation_id=None):
+    logger.exception(
+        'Supabase RPC failed rpc=%s operation_id=%s error=%s code=%s details=%s hint=%s',
+        rpc, operation_id, str(error), getattr(error, 'code', None),
+        getattr(error, 'details', None), getattr(error, 'hint', None),
+    )
 
 FIXED_LESSON_DURATION = "70 минут"
 ALLOWED_COLLEGES = ("ETEC", "META", "ALT", "Q", "ATKK")
@@ -260,6 +271,7 @@ class SupabaseService:
                 },
             ).execute()
         except Exception as error:
+            _log_rpc_exception(error, 'create_lesson_with_daily_limit')
             message = str(error)
             if "DAILY_LIMIT_REACHED" in message:
                 raise self._daily_limit_error() from error
@@ -293,6 +305,7 @@ class SupabaseService:
         try:
             response = self.client.rpc('lesson_plan_storage_status', {}).execute()
         except Exception as error:
+            _log_rpc_exception(error, 'lesson_plan_storage_status', operation_id)
             from services.storage_diagnostics import database_failure
             details = database_failure(error, 'lesson_plan_storage_status', 'database_preflight', operation_id)
             if details['reason'] == 'auth_required' or details['code'] in ('PGRST301', 'PGRST302'):
@@ -334,6 +347,7 @@ class SupabaseService:
         try:
             response = self.client.rpc("save_lesson_plan_with_daily_limit", parameters).execute()
         except Exception as error:
+            _log_rpc_exception(error, 'save_lesson_plan_with_daily_limit', operation_id)
             from services.storage_diagnostics import database_failure
             details = database_failure(error, 'save_lesson_plan_with_daily_limit', 'save', operation_id)
             if details['reason'] == 'daily_limit_reached':
